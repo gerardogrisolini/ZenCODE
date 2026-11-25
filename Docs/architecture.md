@@ -222,9 +222,18 @@ over, except the selection of a new session in a slot opened with
 `keepsSelectionOnNewSession`, which starts from the selection of the session
 it replaces (a load still restores the saved selection); the runner session
 of the previous incarnation is discarded, the new one is created by the
-channel. `startSession(in:sessionID:inheriting:)` starts an **empty** slot with a copy
-of a selection, without replacing the source conversation. ZenApp uses it for
-**New Session**. A saved-session load refuses an ID already running or being
+channel. A new controller (the first session of a slot, and every later one
+that does not keep the selection) starts from the selection a launch in the slot's
+folder would start from (`ChatSessionController.initialSelection(for:workingDirectory:)`,
+computed once for the controller and its reducer): the agent is
+`ChatSessionEnvironment.startingAgent(forWorkingDirectory:)`, that is the
+launch agent in the launch folder (`launchWorkingDirectory`), read without I/O,
+so the terminal and `zen --telegram` start as before, and in another folder the
+default developer of that folder's project, unless the launch requested an
+agent (`requestedAgentName`, `--agent`), which then starts in every folder; the
+model follows that agent, with the launch model as the last fallback. The
+macOS app opens every session, the first of a window and each New Session, this
+way, and never copies the selection of another session. A saved-session load refuses an ID already running or being
 loaded in another slot, even if the same conversation was saved under another
 name. A slot opened with `ChatSlotDescriptor.usesDedicatedRunner` (default
 `false`) runs its sessions on a runner of its own: `openSlot(_:)` creates it as a

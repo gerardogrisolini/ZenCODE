@@ -3,7 +3,8 @@
 //  ZenAppSessionTests
 //
 //  One system window holds several sessions: New Session adds one to that
-//  window, even while a turn runs, and each session keeps its own runner,
+//  window, even while a turn runs, clean as the first one (never with the
+//  selection of another session), and each session keeps its own runner,
 //  transcript, and turn.
 //
 
@@ -14,18 +15,21 @@ import ZenCODECore
 @testable import ZenAppSession
 
 extension ZenWindowSessionTests {
-    @Test("New Session during a held turn adds a selected session to the same window and inherits its selection")
-    func newSessionDuringATurnStaysInTheSameWindow() async throws {
+    @Test("New Session during a held turn adds a selected session to the same window that starts clean, without the selection of the selected one")
+    func newSessionDuringATurnStaysInTheSameWindowAndStartsClean() async throws {
         try await withRuntime { runtime, backend, workspace in
             let window = ZenWorkspaceWindow(runtime: runtime, workspace: workspace)
             await window.openFirstSession()
             let first = try #require(window.selectedSession)
             #expect(await eventually { first.snapshot != nil && first.epoch == first.current.epoch })
+            // The selection every session of the window starts from.
+            let clean = try #require(await Self.selection(of: first, in: runtime))
             first.draft = "/tools shell"
             first.submitDraft()
             #expect(await first.waitUntilIdle())
             #expect(await eventually { first.snapshot?.selection.toolKeys == ["shell"] })
             let selected = try #require(await Self.selection(of: first, in: runtime))
+            #expect(selected != clean)
 
             await backend.hold()
             first.draft = "First prompt"
@@ -46,7 +50,11 @@ extension ZenWindowSessionTests {
             #expect(first.isBusy)
             #expect(await backend.isHolding)
             #expect(!backend.lifecycle.events.contains(.heldTurnCancelled))
-            #expect(await Self.selection(of: second, in: runtime) == selected)
+            // The new session starts clean: not with the tools of the
+            // selected one, which keeps its own.
+            let opened = try #require(await Self.selection(of: second, in: runtime))
+            #expect(opened == clean)
+            #expect(opened.toolKeys != ["shell"])
             #expect(await Self.selection(of: first, in: runtime) == selected)
 
             await backend.hold()

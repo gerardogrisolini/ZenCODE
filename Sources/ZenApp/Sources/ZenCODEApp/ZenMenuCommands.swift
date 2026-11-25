@@ -2,11 +2,11 @@
 //  ZenMenuCommands.swift
 //  ZenApp
 //
-//  The menu bar of the app: Open Folder, New and Save Session in the File
-//  menu, and the Session menu, acting on the session of the key window; its
-//  Show/Hide Chat Reader item (⌃Y) opens and closes the shared-chat reader,
-//  its Full Access item (⌃G) switches the app's access mode, and its Voice
-//  Mode and Pause/Resume Voice items run `/voice`.
+//  The menu bar of the app: New Window, New Session, Close Session and Save
+//  Session in the File menu, and the Session menu, acting on the session of
+//  the key window; its Show/Hide Chat Reader item (⌃Y) opens and closes the
+//  shared-chat reader, its Full Access item (⌃G) switches the app's access
+//  mode, and its Voice Mode and Pause/Resume Voice items run `/voice`.
 //
 
 import AppKit
@@ -36,6 +36,12 @@ import ZenCODECore
 /// `/voice pause` or `/voice resume`. Like the items below them they run
 /// the command in the key window, with its conversation selected first
 /// (``ZenWindowSession/run(_:)``), and have no shortcut.
+///
+/// File > New Window… (⌘N) replaces the "New ZenCODE Window" item the window
+/// group adds, and asks for the folder of the new window. File > Close Session
+/// runs `/exit` in the key window's selected session, as if it were typed, so
+/// it is refused while a turn runs; it has no shortcut, ⌘W stays the system's
+/// Close Window.
 struct ZenMenuCommands: Commands {
     let launcher: ZenAppLauncher
 
@@ -45,11 +51,13 @@ struct ZenMenuCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button("Open Folder…") {
-                openFolder()
+        // Replaces the "New ZenCODE Window" item (⌘N) that the window group
+        // adds: New Window… takes its place and its shortcut.
+        CommandGroup(replacing: .newItem) {
+            Button("New Window…") {
+                openNewWindow()
             }
-            .keyboardShortcut("o", modifiers: .command)
+            .keyboardShortcut("n", modifiers: .command)
 
             Divider()
 
@@ -59,6 +67,11 @@ struct ZenMenuCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(workspaceWindow?.isClosed != false)
+
+            Button("Close Session") {
+                session?.run(ZenAppCommands.exit.command)
+            }
+            .disabled(session == nil)
         }
 
         CommandGroup(after: .textEditing) {
@@ -151,9 +164,9 @@ struct ZenMenuCommands: Commands {
         }
     }
 
-    /// Asks for a folder and opens a window on it (or brings forward the
+    /// Asks for a folder and opens a new window on it (or brings forward the
     /// window already open on it).
-    private func openFolder() {
+    private func openNewWindow() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

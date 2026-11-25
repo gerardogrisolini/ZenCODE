@@ -35,10 +35,12 @@ struct ZenSessionSidebar: View {
                         session: openSession,
                         title: title,
                         showsIdentifier: openSession.sessionTitle == nil || (sessionsByTitle[title]?.count ?? 0) > 1,
-                        isCurrent: openSession === session
-                    ) {
-                        window.select(openSession)
-                    }
+                        isCurrent: openSession === session,
+                        focus: { window.select(openSession) },
+                        // Through `/exit`, as the File menu does, so a session that
+                        // is running a turn refuses it.
+                        close: { openSession.run(ZenAppCommands.exit.command) }
+                    )
                 }
             }
             Section("Saved sessions") {
@@ -212,45 +214,71 @@ struct ZenSessionSidebar: View {
 }
 
 /// One session of a system window, identified independently of its title.
+/// The current session shows a checkmark; every other one shows a button that
+/// closes it with `/exit`, disabled while the session would refuse the line.
 private struct ZenOpenSessionRow: View {
     let session: ZenWindowSession
     let title: String
     let showsIdentifier: Bool
     let isCurrent: Bool
     let focus: () -> Void
+    let close: () -> Void
 
     @Environment(\.zenPalette) private var palette
 
     var body: some View {
-        Button(action: focus) {
-            HStack(spacing: 8) {
-                Image(systemName: "bubble.left.and.text.bubble.right")
-                    .foregroundStyle(isCurrent ? palette.accent : palette.textMuted)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .foregroundStyle(palette.textPrimary)
-                        .fontWeight(isCurrent ? .semibold : .regular)
-                        .lineLimit(1)
-                    if showsIdentifier {
-                        Text("Session \(String(session.id.uuidString.prefix(8)))")
-                            .font(.caption)
-                            .foregroundStyle(palette.textMuted)
+        HStack(spacing: 8) {
+            Button(action: focus) {
+                HStack(spacing: 8) {
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                        .foregroundStyle(isCurrent ? palette.accent : palette.textMuted)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .foregroundStyle(palette.textPrimary)
+                            .fontWeight(isCurrent ? .semibold : .regular)
+                            .lineLimit(1)
+                        if showsIdentifier {
+                            Text("Session \(String(session.id.uuidString.prefix(8)))")
+                                .font(.caption)
+                                .foregroundStyle(palette.textMuted)
+                        }
                     }
+                    Spacer(minLength: 4)
                 }
-                Spacer(minLength: 4)
-                if isCurrent {
-                    Image(systemName: "checkmark")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(palette.accent)
-                        .accessibilityLabel("Current session")
-                }
-                activity
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help(title)
+            if isCurrent {
+                Image(systemName: "checkmark")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(palette.accent)
+                    .accessibilityLabel("Current session")
+            } else {
+                closeButton
+            }
+            activity
+        }
+    }
+
+    /// Closes the session with `/exit`. The session is not the one on show, so
+    /// a refusal would land in a transcript nobody sees: the button is disabled
+    /// while the session would refuse the line (a turn is running).
+    private var closeButton: some View {
+        let refuses = session.refusesNow(ZenAppCommands.exit.command)
+        return Button(action: close) {
+            Image(systemName: "xmark")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(palette.textMuted)
         }
         .buttonStyle(.plain)
-        .help(title)
+        .accessibilityLabel("Close session")
+        .disabled(refuses)
+        .help(refuses
+            ? "Wait for the current line to finish before closing this session"
+            : "Close this session (/exit)")
     }
 
     @ViewBuilder

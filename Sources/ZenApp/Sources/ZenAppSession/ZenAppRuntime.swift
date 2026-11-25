@@ -242,27 +242,13 @@ public final class ZenAppRuntime {
     }
 
     /// Opens a window on `workspace`: a slot of the host with its first
-    /// session, ready for the first line.
+    /// session, ready for the first line. The session starts clean, as a
+    /// first launch of the app on `workspace` would: from the defaults of
+    /// that folder's project (its default agent, unless the launch asked
+    /// for one), never from the selection of another session.
     public func openWindow(workspace: URL) async throws -> ZenWindowSession {
-        try await openWindow(workspace: workspace, inheritingSelectionFrom: nil)
-    }
-
-    /// Opens a fresh window with the selection of a live window on the same
-    /// workspace. If the source is missing (for example on scene restoration),
-    /// starts from the launch profile instead.
-    public func openWindow(
-        workspace: URL,
-        inheritingSelectionFrom sourceWindowID: UUID?
-    ) async throws -> ZenWindowSession {
         guard !isShutDown else { throw ChatSessionHostError.shutDown }
-        let selection: ChatSessionSelection?
-        if let sourceWindowID,
-           let source = openWindows(in: workspace).first(where: { $0.id == sourceWindowID }) {
-            selection = await sessionHost.incarnation(in: source.slotID)?.controller.selection
-        } else {
-            selection = nil
-        }
-        let window = try await ZenWindowSession.open(runtime: self, workspace: workspace, selection: selection)
+        let window = try await ZenWindowSession.open(runtime: self, workspace: workspace)
         guard !isShutDown else {
             await window.close()
             throw ChatSessionHostError.shutDown

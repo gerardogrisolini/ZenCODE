@@ -113,9 +113,9 @@ public final class ChatSessionController {
     var hostBinding: ChatSessionHostBinding?
 
     /// The agent, model, thinking, tool, and skill choices of the session. A
-    /// new controller starts from the launch agent and the launch's explicit
-    /// model, unless the host's slot keeps the selection of the session it
-    /// replaces (``ChatSlotDescriptor/keepsSelectionOnNewSession``).
+    /// new controller starts from ``initialSelection(for:workingDirectory:)``
+    /// for its working directory, unless the host's slot keeps the selection
+    /// of the session it replaces (``ChatSlotDescriptor/keepsSelectionOnNewSession``).
     public package(set) var selection: ChatSessionSelection
     /// The link to the saved session and the prompt it was restored with.
     public package(set) var savedSessionState = ChatSavedSessionState()
@@ -161,6 +161,7 @@ public final class ChatSessionController {
             managementRuntime: nil,
             environment: environment,
             workingDirectory: workingDirectory,
+            selection: nil,
             presenter: presenter,
             host: host,
             authorizer: authorizer,
@@ -191,6 +192,37 @@ public final class ChatSessionController {
             managementRuntime: managementRuntime,
             environment: environment,
             workingDirectory: workingDirectory,
+            selection: nil,
+            presenter: presenter,
+            host: host,
+            authorizer: authorizer,
+            retainsTranscript: retainsTranscript,
+            retainsFileArtifactHistory: retainsFileArtifactHistory
+        )
+    }
+
+    /// A controller on `managementRuntime` that starts from `selection`
+    /// instead of reading its initial selection: a host's incarnation, whose
+    /// reducer is seeded with the same selection.
+    nonisolated convenience init(
+        sessionID: String,
+        managementRuntime: any ChatSessionManagementRuntime,
+        environment: ChatSessionEnvironment,
+        workingDirectory: URL,
+        selection: ChatSessionSelection,
+        presenter: any ChatSessionPresenter,
+        host: any ChatInteractionHost,
+        authorizer: ChatToolConsentAuthorizer,
+        retainsTranscript: Bool,
+        retainsFileArtifactHistory: Bool
+    ) {
+        self.init(
+            sessionID: sessionID,
+            runtime: managementRuntime,
+            managementRuntime: managementRuntime,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            selection: selection,
             presenter: presenter,
             host: host,
             authorizer: authorizer,
@@ -205,6 +237,7 @@ public final class ChatSessionController {
         managementRuntime: (any ChatSessionManagementRuntime)?,
         environment: ChatSessionEnvironment,
         workingDirectory: URL,
+        selection: ChatSessionSelection?,
         presenter: any ChatSessionPresenter,
         host: any ChatInteractionHost,
         authorizer: ChatToolConsentAuthorizer,
@@ -216,7 +249,8 @@ public final class ChatSessionController {
         self.managementRuntime = managementRuntime
         self.environment = environment
         self.modelCatalog = ChatModelCatalog(environment: environment)
-        self.selection = Self.initialSelection(for: environment)
+        self.selection = selection
+            ?? Self.initialSelection(for: environment, workingDirectory: workingDirectory)
         self.workingDirectory = workingDirectory
         self.presenter = presenter
         self.host = host
@@ -227,12 +261,20 @@ public final class ChatSessionController {
 
     // MARK: - Presentation
 
-    /// The selection a new controller starts from: the launch agent and the
-    /// launch's explicit model. A reducer created before its controller is
-    /// seeded with it.
-    nonisolated static func initialSelection(for environment: ChatSessionEnvironment) -> ChatSessionSelection {
+    /// The selection a new controller working in `workingDirectory` starts
+    /// from, as a launch in that folder would: the agent
+    /// ``ChatSessionEnvironment/startingAgent(forWorkingDirectory:)`` selects
+    /// for it and the launch's explicit model. Without an explicit model the
+    /// session runs the model of that agent, else the configured default,
+    /// with the launch model as the last fallback (see
+    /// ``currentEffectiveModelID()``). A reducer created before its
+    /// controller is seeded with it.
+    nonisolated static func initialSelection(
+        for environment: ChatSessionEnvironment,
+        workingDirectory: URL
+    ) -> ChatSessionSelection {
         ChatSessionSelection(
-            agent: environment.launchAgent,
+            agent: environment.startingAgent(forWorkingDirectory: workingDirectory),
             modelIDOverride: environment.explicitModelID
         )
     }

@@ -90,11 +90,13 @@ public struct ChatSlotDescriptor: Sendable {
     /// Whether every new session of the slot (`/sessions new`,
     /// ``ChatSessionHost/newSession(in:sessionID:)``) starts from the
     /// selection of the session it replaces (agent, model, thinking, tools,
-    /// and skills, see ``ChatSessionSelection``) instead of the launch
-    /// profile. A load still restores the selection the saved session
+    /// and skills, see ``ChatSessionSelection``) instead of the defaults a
+    /// launch in the slot's folder starts from
+    /// (``ChatSessionController/initialSelection(for:workingDirectory:)``).
+    /// A load still restores the selection the saved session
     /// recorded; the first session of a slot, and the one after
-    /// ``ChatSessionHost/closeSession(in:runtimeSession:)``, start from the
-    /// launch profile either way. `false` by default.
+    /// ``ChatSessionHost/closeSession(in:runtimeSession:)``, start from those
+    /// defaults either way. `false` by default.
     public var keepsSelectionOnNewSession: Bool
     /// Whether the slot runs its sessions on a runner of its own instead of
     /// the host's ``ChatSessionHost/runner``: a sibling the host creates when

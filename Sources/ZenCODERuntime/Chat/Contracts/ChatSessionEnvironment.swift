@@ -25,8 +25,21 @@ public struct ChatSessionEnvironment: Sendable {
     /// launch agent's model, or the selected default (for a host, its model).
     /// The last fallback when the session's own selection resolves none.
     public let launchModelID: String?
-    /// The agent the launch selected, if any.
+    /// The agent the launch selected, if any: the requested agent
+    /// (``requestedAgentName``), or without one the default developer of the
+    /// project of ``launchWorkingDirectory``; `nil` for a launch without
+    /// persisted configuration. A session that works in another folder
+    /// starts from ``startingAgent(forWorkingDirectory:)`` instead.
     public let launchAgent: AgentProfile?
+    /// The working directory the launch resolved (`--working-directory`,
+    /// `ZENCODE_AGENT_CWD`, the launch folder, or the hosted working
+    /// directory): the folder ``launchAgent`` was selected for.
+    public let launchWorkingDirectory: URL
+    /// The agent profile name the launch explicitly requested (`--agent`,
+    /// `ZENCODE_AGENT`, or the hosted `agentName`), trimmed; `nil` when none
+    /// was requested and ``launchAgent`` is the default developer of the
+    /// project of ``launchWorkingDirectory``.
+    public let requestedAgentName: String?
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
     /// Whether the process runs inside a host app rather than a terminal.
@@ -65,6 +78,8 @@ public struct ChatSessionEnvironment: Sendable {
         self.explicitModelID = configuration.modelID
         self.launchModelID = configuration.effectiveModelID
         self.launchAgent = configuration.selectedAgent
+        self.launchWorkingDirectory = configuration.workingDirectory
+        self.requestedAgentName = configuration.requestedAgentName
         self.maxToolRounds = configuration.maxToolRounds
         self.maxOutputTokens = configuration.maxOutputTokens
         self.appMode = configuration.appMode
@@ -73,5 +88,30 @@ public struct ChatSessionEnvironment: Sendable {
         self.userHomeDirectoryURL = userHomeDirectoryURL
         self.worktree = configuration.worktree
         self.persistsModelSelections = persistsModelSelections
+    }
+
+    /// The agent a new session working in `directory` starts with, as a
+    /// launch in that folder would select it.
+    ///
+    /// ``launchAgent``, without reading anything, when the launch requested
+    /// an agent (``requestedAgentName``), selected none (a launch without
+    /// persisted configuration), or `directory` is
+    /// ``launchWorkingDirectory``. Otherwise the default developer of the
+    /// project of `directory`
+    /// (``AgentProfileStore/developerProfile(in:workspaceRootURL:fileManager:)``)
+    /// among the hosted profiles (``hostedAgentProfiles``), or the configured
+    /// ones without them; a failure to read the profiles or the project's
+    /// selection falls back to ``launchAgent``.
+    public func startingAgent(forWorkingDirectory directory: URL) -> AgentProfile? {
+        guard requestedAgentName == nil, let launchAgent else { return launchAgent }
+        guard directory.standardizedFileURL.path != launchWorkingDirectory.standardizedFileURL.path else {
+            return launchAgent
+        }
+        do {
+            let agents = try hostedAgentProfiles ?? AgentProfileStore.loadRequired()
+            return try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: directory)
+        } catch {
+            return launchAgent
+        }
     }
 }

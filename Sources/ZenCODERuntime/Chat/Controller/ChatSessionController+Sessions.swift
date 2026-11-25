@@ -31,7 +31,8 @@ extension ChatSessionController {
     /// is kept; the conversation, the artifacts, the saved-session link, the
     /// plan, and the `/goal` workflow are cleared. In a host's slot
     /// (``hostBinding``) the new session is a new incarnation: a new
-    /// controller from the launch profile with the slot's bindings (from
+    /// controller with the slot's bindings, starting from the defaults a
+    /// launch in the slot's folder starts from (from
     /// this controller's selection when the slot keeps it, see
     /// ``ChatSlotDescriptor/keepsSelectionOnNewSession``), whose
     /// runtime session is created here with that selection, while this

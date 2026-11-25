@@ -33,8 +33,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - macOS app: **Open sessions** lists the sessions of the current window,
   indicates which ones are working or waiting for input, and selects one.
   See [Parallel sessions](Docs/app.md#parallel-sessions).
-- `ChatSessionHost.startSession(in:sessionID:inheriting:)` starts an empty slot
-  with a copy of a session's selection, without replacing that session.
+- macOS app: **File > Close Session** runs `/exit` in the current session.
+- macOS app: in **Open sessions**, the sessions that are not selected show a
+  close button in place of the checkmark, which runs `/exit` in that session.
+  It is disabled while that session would refuse the line (a turn is running).
 - `ChatSlotDescriptor.usesDedicatedRunner` (`false` by default) makes the host
   run the sessions of a slot on a runner of its own, a sibling of the host's
   that shares the tool authorization handler, the MCP runtime, the feature
@@ -49,9 +51,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `ChatSessionEnvironment(…persistsModelSelections:)` (`true` by default): with
   `false`, `/models` and `/think` change only the session and do not save the
   user's default model or thinking level.
+- `ChatSessionEnvironment.launchWorkingDirectory`, `requestedAgentName`, and
+  `startingAgent(forWorkingDirectory:)`: the agent a new session in a folder
+  starts with, as a launch in that folder would select it. That is the launch
+  agent in the launch folder, or in every folder when the launch requested an
+  agent; otherwise the default developer of that folder's project. The
+  sessions of a `ChatSessionHost` slot start from it.
 
 ### Changed
 
+- macOS app: **File > Open Folder…** (⌘O) is now **File > New Window…** (⌘N),
+  and the **File > New ZenCODE Window** item is removed.
 - Renamed the core file tool `local.editFile` to `local.edit`. The argument
   schema is unchanged (`path`, `old`, `new`); prompts, tool routing,
   presentation, and docs now use the new name.
@@ -63,14 +73,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   from the last line of the answer (`…text.---`).
 - macOS app: **New Session** (⇧⌘N) now adds and selects a session in the same
   window instead of replacing the current conversation, even while a turn runs.
-  It inherits the current agent, model, thinking level, tools, and skills. A
+  It starts clean from the defaults of the window's folder, as a new window
+  does, and never copies the selection of the current session. A
   typed `/sessions new` still replaces only its own session.
 - macOS app: every session now runs on a runner of its own, so each session
   changes its model, agent, thinking level, tools, and skills without
   interrupting the turns of the other sessions. `/models` and `/think` in the app
   change only their session and no longer save the default model or thinking
-  level: the first session of a window starts from the saved defaults or the
-  launch profile. Full Access stays app-wide and also applies to sessions added
+  level: every new session starts from the saved defaults and the launch
+  options (`--agent`, `--model`, `--skills`), as a launch on the window's
+  folder. Full Access stays app-wide and also applies to sessions added
   later. The sessions still share the files of the workspace, and one local DS4
   model runs per process. See [Parallel sessions](Docs/app.md#parallel-sessions).
 - A saved conversation already running or loading in another slot of the same
@@ -78,6 +90,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- macOS app: a window opened on another folder starts from that folder's
+  project defaults, its default agent included, as a launch in that folder,
+  instead of the agent of the folder the app was launched in.
 - ACP routes `/changes` and `/undo` from the operator's text block even when
   the prompt also carries resource, assistant-only, or known Xcode context
   blocks, without interpreting those blocks themselves as workspace commands.

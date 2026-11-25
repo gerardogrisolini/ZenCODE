@@ -34,8 +34,8 @@ struct ZenCODEApp: App {
 
     var body: some Scene {
         // The value is the workspace folder of the window; `nil` (the first
-        // window, File > New Window) is the directory the app started from,
-        // or the folder chosen when the app was opened from its bundle.
+        // window) is the directory the app started from, or the folder chosen
+        // when the app was opened from its bundle.
         WindowGroup("ZenCODE", for: URL.self) { $workspace in
             ZenWindowScene(launcher: appDelegate.launcher, requestedWorkspace: workspace)
         }

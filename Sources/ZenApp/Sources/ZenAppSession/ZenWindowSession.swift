@@ -480,16 +480,17 @@ public final class ZenWindowSession: Identifiable {
     }
 
     /// Opens a slot for `workspace` on a runner of its own and starts its
-    /// first session, using the supplied selection or the launch profile.
-    /// Every later new session keeps the selection of the one it replaces.
-    /// The slot's runner takes the app's access mode before the first
-    /// session starts; a toggle that ends while the window opens reaches it
-    /// once ``ZenAppRuntime`` registered the window. On a failure the slot is
-    /// closed, and the host shuts its runner down with it.
+    /// first session clean, as a first launch on `workspace` would: from the
+    /// defaults of that folder's project (``ChatSessionHost/newSession(in:sessionID:)``),
+    /// with the agent's tools and skills and the launch's `--skills` applied.
+    /// Every later `/sessions new` typed in the window keeps the selection of
+    /// the session it replaces. The slot's runner takes the app's access mode
+    /// before the first session starts; a toggle that ends while the window
+    /// opens reaches it once ``ZenAppRuntime`` registered the window. On a
+    /// failure the slot is closed, and the host shuts its runner down with it.
     static func open(
         runtime: ZenAppRuntime,
-        workspace: URL,
-        selection: ChatSessionSelection?
+        workspace: URL
     ) async throws -> ZenWindowSession {
         let id = UUID()
         let hooks = ZenWindowHooks()
@@ -522,14 +523,9 @@ public final class ZenWindowSession: Identifiable {
             let accessMode = runtime.localExecAccessMode
             await runner.setLocalExecAccessMode(accessMode)
             let sessionID = "\(ChatSlotDescriptor.defaultSessionIDPrefix)-\(UUID().uuidString.lowercased())"
-            let incarnation: ChatSessionIncarnation
-            if let selection {
-                incarnation = try await sessionHost.startSession(in: slotID, sessionID: sessionID, inheriting: selection)
-            } else {
-                incarnation = try await sessionHost.newSession(in: slotID, sessionID: sessionID)
-                await incarnation.controller.applyInitialAgentSelectionIfNeeded()
-                try await incarnation.controller.applyInitialSkillSelectionIfNeeded()
-            }
+            let incarnation = try await sessionHost.newSession(in: slotID, sessionID: sessionID)
+            await incarnation.controller.applyInitialAgentSelectionIfNeeded()
+            try await incarnation.controller.applyInitialSkillSelectionIfNeeded()
             let controller = incarnation.controller
             // As the terminal does before its startup summary, create the
             // runtime session and load the model. Reading the tool descriptors

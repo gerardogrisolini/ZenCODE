@@ -227,7 +227,10 @@ struct TerminalChatSessionHostTests {
             let terminal = try environment.makeTerminal()
             let host = terminal.sessionHost
             let slot = terminal.terminalSlotID
-            let launchSelection = ChatSessionController.initialSelection(for: host.environment)
+            let launchSelection = ChatSessionController.initialSelection(
+                for: host.environment,
+                workingDirectory: host.environment.launchWorkingDirectory
+            )
             try await terminal.createCurrentSession(discoverExternalTools: false)
             let previous = terminal.chatSession
             let previousSessionID = terminal.sessionID

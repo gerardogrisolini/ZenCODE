@@ -161,20 +161,30 @@ The host runs one incarnation per slot. `/sessions new`, a saved session
 loaded or restored from a checkpoint, `newSession(in:sessionID:)`, and
 `loadSavedSession(in:name:checkpointEntryID:)` replace it: the previous
 controller is fenced, its pending requests refused, and a new controller
-starts from the launch profile (a loaded session restores the selection saved
-with it), with the slot's presenter, host, hooks, and commands; selection,
-plan, workflow, and transcript never carry over. A slot opened with
+starts from the defaults a launch in the slot's folder would start from (a
+loaded session restores the selection saved with it), with the slot's
+presenter, host, hooks, and commands; selection, plan, workflow, and
+transcript never carry over. The agent of those defaults is
+`ChatSessionEnvironment.startingAgent(forWorkingDirectory:)` for the slot's
+`workingDirectory`: the launch agent (`launchAgent`) when the folder is the
+launch folder (`launchWorkingDirectory`), without reading anything; in another
+folder, the default developer of that folder's project, among the hosted
+profiles or the configured ones; and the launch agent in every folder when the
+launch requested one (`requestedAgentName`: `--agent`, `ZENCODE_AGENT`, the
+hosted `agentName`) or when the profiles cannot be read. The model follows that
+agent, with the launch model as the last fallback, unless the launch gave an
+explicit model. A slot opened with
 `ChatSlotDescriptor.keepsSelectionOnNewSession` set to `true` is the
 exception for the selection: every new session (`/sessions new`,
 `newSession(in:sessionID:)`) starts from the selection of the session it
-replaces (agent, model, thinking level, tools, and skills) instead of the
-launch profile; a load still restores the selection saved with the session,
+replaces (agent, model, thinking level, tools, and skills) instead of those
+defaults; a load still restores the selection saved with the session,
 and the first session of the slot and the one after `closeSession(in:)`
-start from the launch profile. The option is `false` by default; the
-terminal, `zen --telegram`, and the macOS app set it for their slots. To start a
-separate conversation with the same settings, open an empty slot and call
-`startSession(in:sessionID:inheriting:)` with a fresh ID and the source controller's
-`selection`. This does not copy history or interrupt the source turn. Loading a
+start from the defaults of the slot's folder. The option is `false` by default; the
+terminal, `zen --telegram`, and the macOS app set it for their slots. Every
+session the macOS app opens, the first of a window and each New Session, is a
+first session of a slot of its own, so it starts from those defaults and never
+copies the selection of another session. Loading a
 saved session whose ID is already running or being loaded in another slot is
 refused before replacing the requesting slot's conversation.
 

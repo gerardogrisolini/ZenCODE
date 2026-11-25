@@ -172,7 +172,10 @@ extension ChatSessionHostTests {
             #expect(host.incarnation(in: slot)?.epoch == first.epoch)
             #expect(first.controller.sessionID == "first")
             #expect(first.reducer == nil)
-            let launchSelection = ChatSessionController.initialSelection(for: host.environment)
+            let launchSelection = ChatSessionController.initialSelection(
+                for: host.environment,
+                workingDirectory: host.environment.launchWorkingDirectory
+            )
             #expect(first.controller.selection == launchSelection)
 
             // The session changes its selection; the next one starts over,
@@ -242,7 +245,10 @@ extension ChatSessionHostTests {
             #expect(second.sessionID.hasPrefix("minted-by-slot-"))
             #expect(UUID(uuidString: String(second.sessionID.dropFirst("minted-by-slot-".count))) != nil)
             #expect(second.controller.sessionID == second.sessionID)
-            #expect(second.controller.selection == ChatSessionController.initialSelection(for: host.environment))
+            #expect(second.controller.selection == ChatSessionController.initialSelection(
+                for: host.environment,
+                workingDirectory: host.environment.launchWorkingDirectory
+            ))
             #expect(second.controller.history.isEmpty)
             #expect(hooks.steps == [
                 "newSessionWillStart@\(first.epoch)",

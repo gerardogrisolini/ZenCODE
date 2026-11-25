@@ -18,8 +18,9 @@ import ZenCODECore
 /// its own, so its model, agent, and thinking level are its own, and it
 /// generates, waits for an answer, or is driven from Telegram while the
 /// operator works in another session of the window. New Session
-/// (``openNewSession()``) adds a session to this window, with the selection
-/// of the selected one, and selects it; it never opens another system window.
+/// (``openNewSession()``) adds a session to this window, clean as the first
+/// one (never with the selection of another session), and selects it; it
+/// never opens another system window.
 ///
 /// `/exit` in a session closes that session alone (``closeSession(_:)``);
 /// once the last session closed, the window asks to close
@@ -72,7 +73,8 @@ public final class ZenWorkspaceWindow {
 
     // MARK: - Opening
 
-    /// Opens the first session of the window, with the launch profile, and
+    /// Opens the first session of the window, clean as a first launch on
+    /// ``workspace`` (``ZenAppRuntime/openWindow(workspace:)``), and
     /// selects it; a failure is kept in ``openFailure``. Only the first call
     /// does anything.
     public func openFirstSession() async {
@@ -93,9 +95,10 @@ public final class ZenWorkspaceWindow {
         }
     }
 
-    /// Opens a new session in this window, with the selection (model, agent,
-    /// thinking level) of the selected session
-    /// (``ZenAppRuntime/openWindow(workspace:inheritingSelectionFrom:)``),
+    /// Opens a new session in this window, clean as the first one: from the
+    /// defaults of ``workspace``, never with the selection (agent, model,
+    /// thinking level, tools, skills) of another session
+    /// (``ZenAppRuntime/openWindow(workspace:)``),
     /// adds it after the others, and selects it. It opens also while other
     /// sessions of the window generate or are driven from Telegram. On a
     /// failure the selected session shows it as an error row.
@@ -105,11 +108,10 @@ public final class ZenWorkspaceWindow {
     @discardableResult
     public func openNewSession() async -> ZenWindowSession? {
         guard !isClosed else { return nil }
-        let source = selectedSession
         beginOpening()
         defer { endOpening() }
         do {
-            let session = try await runtime.openWindow(workspace: workspace, inheritingSelectionFrom: source?.id)
+            let session = try await runtime.openWindow(workspace: workspace)
             guard !isClosed else {
                 await session.close()
                 return nil

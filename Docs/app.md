@@ -126,12 +126,16 @@ it on `~/.zencode`. A bundle you delete is added again at the next build.
 
 Each window is a workspace with one or more sessions, each on its own runner
 (see [Parallel sessions](#parallel-sessions)), and the title bar shows the
-selected session's title and the workspace path. **File > Open Folder…** (⌘O)
+selected session's title and the workspace path. **File > New Window…** (⌘N)
 opens a window on another folder, or brings forward the first window already
-open on it. **File > New Session** (⇧⌘N) adds a session to the current window
+open on it. A new window starts from the defaults of its folder, as a launch
+of the app in that folder: the default agent of that folder's project (unless
+the app was launched with `--agent`), not the agent of the folder the app was
+launched in. **File > New Session** (⇧⌘N) adds a session to the current window
 (see [Parallel sessions](#parallel-sessions)). `/exit` closes its session (it
-is refused while a turn runs, as in the terminal), and the window closes when
-its last session closes. Closing the last window quits the app, and quitting
+is refused while a turn runs, as in the terminal), and **File > Close Session**
+runs `/exit` in the selected session. The window closes when its last session
+closes. Closing the last window quits the app, and quitting
 waits for the sessions to shut down, for about 5 seconds at most. After a
 `--worktree` launch, closing the last window or quitting first asks what to do
 with the worktree (see [Worktrees](#worktrees)).
@@ -656,17 +660,25 @@ thinking level, tools, and skills.
 ### Parallel sessions
 
 **New Session** adds another session to the current window and selects it; it
-never opens another system window. The new session starts with no conversation,
-and with the agent, model, thinking level, tools, and skills of the session
-that was selected. It runs beside the others: a turn can run in each session at
-the same time, and adding a session does not wait for a turn to end. The new
-session starts without the Telegram link of the session it comes from.
+never opens another system window. Every new session, the first one of a
+window and each one New Session adds, starts clean, as a first launch of the
+app on the window's folder: with no conversation, with the default agent of
+that folder's project (the agent of `--agent`, when the app was launched with
+one) and its tools and skills, with the `--model` and `--skills` of the launch,
+and with the saved defaults for the rest. It never copies the agent, model,
+thinking level, tools, or skills of another session. It runs beside the
+others: a turn can run in each session at the same time, and adding a session
+does not wait for a turn to end. The new session starts without the Telegram
+link of the session that was selected.
 
 The **Open sessions** section at the top of the sidebar lists the sessions of
 the window, in the order they opened, each by its title, or **New session**
 while it has no title. A session whose title is missing, or is shared with
 another session, also shows `Session` and the first eight characters of its
 identifier. The selected session is checked and in bold (**Current session**).
+Every other session shows, in place of the checkmark, a close button (**Close
+session**) that runs `/exit` in that session; it is disabled while that session
+would refuse the line (a turn is running).
 Each row shows what its session does: a bubble with an exclamation mark while a
 request waits for an answer, and a spinner while a turn generates or another
 line works. A click on a row selects that session in the same window.
@@ -676,9 +688,9 @@ session you can change the model, the agent, the thinking level, the tools, and
 the skills while the other sessions work, and a change never interrupts their
 turns. In the app `/models` and `/think` change only their session: they do not
 save the model or the thinking level as the defaults of the settings, as they
-do in the terminal. The first session of a window starts from the saved
-defaults, or from the launch profile (`--model`, `--agent`, `--skills`), and
-New Session copies the selection of the selected session. **Full Access** stays
+do in the terminal. A change in a session therefore never reaches the sessions
+opened after it, which start from the defaults of the window's folder and the
+launch options (`--agent`, `--model`, `--skills`). **Full Access** stays
 app-wide, and reaches sessions opened later too (see
 [Toolbar and menus](#toolbar-and-menus)).
 
@@ -839,7 +851,7 @@ starts in the default mode.
 | ←, →, Return, Esc | Consent sheet | Moves the focus, chooses the focused button, denies |
 | ↑, ↓, Space, Return, Esc | Menu popover | Moves, toggles or chooses, confirms, cancels |
 | ⌘F | Menu bar | Finds text in the transcript; Return selects the next match and Esc closes the search |
-| ⌘O | Menu bar | Opens a folder in a window |
+| ⌘N | Menu bar | Opens a folder in a new window (File > New Window…) |
 | ⇧⌘N | Menu bar | Adds a session to the current window (see [Parallel sessions](#parallel-sessions)) |
 | ⌘S | Menu bar | Saves the session |
 
