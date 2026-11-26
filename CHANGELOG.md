@@ -10,6 +10,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS app: the Sub-Agents card no longer shows a sub-agent as running
+  after it ended. The window publishes the overview again when a turn
+  finishes, as the terminal and Telegram do, and keeps refreshing it while it
+  shows a sub-agent at work, so one that ends after the turn, or after a
+  shared-chat message woke it, leaves the card too.
+
 ## [6.2.2] - 2026-11-25
 
 ### Added

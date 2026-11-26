@@ -432,6 +432,14 @@ public final class ZenWindowSession: Identifiable {
         let turnID: Int
         let id: UUID
     }
+    /// The publication of the sub-agent overview while it shows a sub-agent
+    /// at work, with a token of its own; `nil` while it shows none (see
+    /// ``followPendingSubAgentsIfNeeded()``).
+    @ObservationIgnored var pendingSubAgentsFollow: (token: UUID, task: Task<Void, Never>)?
+    /// How often ``pendingSubAgentsFollow`` publishes the overview: as often
+    /// as the controller's refresh during an `agent.*` call. A test shortens
+    /// it.
+    @ObservationIgnored var pendingSubAgentsInterval: Duration = .seconds(2)
     /// The readable mention handles of ``mentionSuggestions`` (handle →
     /// participant id), for the parser.
     @ObservationIgnored var mentionHandles: [String: String] = [:]

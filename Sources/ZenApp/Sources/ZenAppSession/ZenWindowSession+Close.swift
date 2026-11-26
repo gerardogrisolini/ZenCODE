@@ -83,6 +83,7 @@ extension ZenWindowSession {
         queuedLines = []
         isBusy = false
         clearSavedSessionLoad()
+        stopFollowingPendingSubAgents()
         // The tabs stay as they are; their models stop.
         stopSubAgentTabs()
     }

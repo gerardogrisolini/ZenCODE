@@ -153,6 +153,8 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     private var scriptedToolDescriptors: [DirectToolDescriptor] = []
     private var scripts: [String: [DirectAgentEvent]] = [:]
     private var subAgents: [DirectSubAgentRuntime.AgentSnapshot] = []
+    /// See ``setSubAgentsAfterNextScript(_:)``.
+    private var subAgentsAfterNextScript: [DirectSubAgentRuntime.AgentSnapshot]?
     private var subAgentTranscripts: [String: ChatSubAgentTranscript] = [:]
     private var snapshotObservers: [UUID: (rootSessionID: String, continuation: AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>.Continuation)] = [:]
     /// The streams of sub-agent snapshots handed out.
@@ -201,6 +203,12 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
         for observer in snapshotObservers.values {
             observer.continuation.yield(snapshots.filter { $0.rootSessionID == observer.rootSessionID })
         }
+    }
+
+    /// The sub-agents the next turn leaves after its scripted events, before
+    /// its answer: a sub-agent that ends after the turn's last tool call.
+    func setSubAgentsAfterNextScript(_ snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
+        subAgentsAfterNextScript = snapshots
     }
 
     /// The transcript of the sub-agent `transcript.agentID`, read while the
@@ -415,6 +423,10 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
             for event in events {
                 await onEvent(event)
             }
+        }
+        if let snapshots = subAgentsAfterNextScript {
+            subAgentsAfterNextScript = nil
+            setSubAgents(snapshots)
         }
         let name = key ?? prompt.components(separatedBy: .newlines).last ?? prompt
         let text = "Scripted answer to \(name)"

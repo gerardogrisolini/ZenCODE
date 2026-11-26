@@ -393,6 +393,77 @@ extension ZenWindowSessionTests {
         }
     }
 
+    @Test("The end of a turn publishes the sub-agent overview: a sub-agent that ended after the last agent.* call leaves the card")
+    func turnEndPublishesTheSubAgentOverview() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            // Only the end of the turn may publish the ended sub-agent.
+            window.pendingSubAgentsInterval = .seconds(3600)
+            let root = window.current.sessionID
+            let call = DirectAgentToolCall(id: "agent-call", name: "agent.create", argumentsObject: [:], argumentsJSON: "{}")
+            await backend.script(prompt: "Delegate", events: [
+                .toolCallStarted(call),
+                .toolCallCompleted(call, DirectAgentToolResult(output: "created", summary: "created")),
+            ])
+            await backend.setSubAgents([Self.overviewSubAgent(root: root, status: .running, pending: true)])
+            await backend.setSubAgentsAfterNextScript([Self.overviewSubAgent(root: root, status: .standby, pending: false)])
+            window.draft = "Delegate"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.subAgents.snapshots.map(\.status) == [.standby] })
+            #expect(window.subAgents.snapshots.map(\.pending) == [false])
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("A sub-agent that ends after the turn, with no tool call, leaves the card; then the window stops publishing")
+    func subAgentEndingAfterTheTurnLeavesTheCard() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            window.pendingSubAgentsInterval = .milliseconds(20)
+            let root = window.current.sessionID
+            let call = DirectAgentToolCall(id: "agent-call", name: "agent.create", argumentsObject: [:], argumentsJSON: "{}")
+            await backend.script(prompt: "Delegate", events: [
+                .toolCallStarted(call),
+                .toolCallCompleted(call, DirectAgentToolResult(output: "created", summary: "created")),
+            ])
+            await backend.setSubAgents([Self.overviewSubAgent(root: root, status: .running, pending: true)])
+            window.draft = "Delegate"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.subAgents.snapshots.map(\.pending) == [true] })
+            #expect(!window.isGenerating)
+            #expect(window.pendingSubAgentsFollow != nil)
+
+            // The sub-agent ends with its last answer: no tool call, no turn.
+            await backend.setSubAgents([Self.overviewSubAgent(root: root, status: .standby, pending: false)])
+            #expect(await eventually { window.subAgents.snapshots.map(\.status) == [.standby] })
+            #expect(window.snapshot?.subAgents.snapshots.map(\.pending) == [false])
+            // No sub-agent at work: the window stops publishing.
+            #expect(await eventually { window.pendingSubAgentsFollow == nil })
+            await runtime.shutdown()
+        }
+    }
+
+    /// The sub-agent `agent-1` of the root session `root`.
+    private static func overviewSubAgent(
+        root: String,
+        status: DirectSubAgentRuntime.Status,
+        pending: Bool
+    ) -> DirectSubAgentRuntime.AgentSnapshot {
+        DirectSubAgentRuntime.AgentSnapshot(
+            id: "agent-1",
+            rootSessionID: root,
+            name: "Worker",
+            status: status,
+            pending: pending,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+    }
+
     @Test("/artifacts shows and hides the artifacts sidebar, beside a running turn too; with arguments it answers the core's notice")
     func artifactsTogglesTheSidebar() async throws {
         try await withRuntime { runtime, backend, workspace in

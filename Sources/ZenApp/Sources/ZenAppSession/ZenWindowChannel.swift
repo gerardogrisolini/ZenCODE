@@ -155,7 +155,8 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
 /// The presenter of a window's slot. The window renders the reducer's
 /// snapshot, so this presenter renders nothing; like the terminal's presenter
 /// it publishes the sub-agent overview around the `agent.*` tool calls (and
-/// refreshes it while one runs), which reaches the reducer as an observer, and
+/// refreshes it while one runs) and once more when the turn finishes, which
+/// reaches the reducer as an observer, and
 /// tells the window when a file-mutation tool settled, the main agent's or a
 /// delegated agent's, so it refreshes the git summary. It records the task
 /// graphs `/tasks` publishes, for their cards.
@@ -223,6 +224,15 @@ final class ZenWindowPresenter: ChatSessionPresenter {
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             await controller.stopSubAgentOverviewRefresh()
         }
+    }
+
+    /// The end of the model work: as the terminal and Telegram do, the
+    /// refresh stops, whoever started it, and the overview is published once,
+    /// so the window shows the sub-agents as the turn leaves them, also one
+    /// that ended after the last `agent.*` call.
+    func turnWillFinish() async {
+        guard let controller else { return }
+        await controller.stopSubAgentOverviewRefresh()
     }
 
     /// A delegated agent's file mutation refreshes the git summary when it

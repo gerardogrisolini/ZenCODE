@@ -88,6 +88,23 @@ enum ZenWindowSteps {
         )
     }
 
+    /// Publishes the sub-agent overview of the incarnation `epoch` of
+    /// `slotID` into its reducer alone, so the window's card follows the
+    /// sub-agents; the channel that drives the slot is not asked, and
+    /// publishes its own. `false` when the slot runs another session, or
+    /// publishes no state.
+    static func publishSubAgentOverview(
+        in sessionHost: ChatSessionHost,
+        slotID: ChatSlotID,
+        epoch: UInt64
+    ) async -> Bool {
+        guard let incarnation = sessionHost.incarnation(in: slotID),
+              incarnation.epoch == epoch,
+              let reducer = incarnation.reducer else { return false }
+        await incarnation.controller.publishSubAgentOverviewIfChanged(presenter: reducer)
+        return true
+    }
+
     /// Runs one turn of `controller` as one step: reserves the prompt, locks
     /// the response language for a prompt the operator typed, composes the
     /// configuration, then, only while the reservation still holds, the line

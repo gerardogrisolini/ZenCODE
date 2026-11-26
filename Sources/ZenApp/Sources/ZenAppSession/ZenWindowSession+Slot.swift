@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The window following its slot: each new incarnation, its snapshots, the
-//  block still streaming, and the task-graph card of a turn.
+//  block still streaming, the task-graph card of a turn, and the sub-agents
+//  still at work.
 //
 
 import Foundation
@@ -26,6 +27,7 @@ extension ZenWindowSession {
         }
         // The sub-agents of the earlier session are not this one's.
         closeSubAgentTabs()
+        stopFollowingPendingSubAgents()
         // Nor are its shared-chat room and messages.
         resetSharedChat()
         // Voice mode, when it follows this window, treats the new session as
@@ -85,6 +87,7 @@ extension ZenWindowSession {
         if subAgents != snapshot.subAgents {
             subAgents = snapshot.subAgents
         }
+        followPendingSubAgentsIfNeeded()
         let firstRequest = snapshot.pendingRequests.first
         if pendingRequest != firstRequest {
             // A request keeps its anchor for as long as it waits: it has one
@@ -185,5 +188,56 @@ extension ZenWindowSession {
         )
         turnTaskGraphCard = TurnTaskGraphCard(turnID: turnID, id: item.id)
         projection.insertLocal(item)
+    }
+
+    // MARK: - Sub-agents at work
+
+    /// The card of the sub-agents shows those at work in ``subAgents``, the
+    /// overview the controller publishes around the `agent.*` calls, after
+    /// the sub-agents' tool calls, and when a turn finishes. A sub-agent that
+    /// ends with none of them (its last answer after the turn, or after a
+    /// shared-chat message woke it) publishes nothing, and the card would
+    /// show it at work for good. So while the overview shows a sub-agent at
+    /// work, it is published again into the slot's reducer every
+    /// ``pendingSubAgentsInterval``, until it shows none, the slot runs
+    /// another session, or the window closes. An overview that shows one
+    /// again starts it over. Idempotent.
+    func followPendingSubAgentsIfNeeded() {
+        guard !isClosed, pendingSubAgentsFollow == nil,
+              subAgents.snapshots.contains(where: \.pending) else { return }
+        let token = UUID()
+        let epoch = current.epoch
+        let sessionHost = sessionHost
+        let slotID = slotID
+        let interval = pendingSubAgentsInterval
+        let task = Task { [weak self] in
+            defer { self?.pendingSubAgentsFollowDidEnd(token) }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
+                guard let self, !self.isClosed, self.current.epoch == epoch,
+                      self.subAgents.snapshots.contains(where: \.pending) else { return }
+                guard await ZenWindowSteps.publishSubAgentOverview(
+                    in: sessionHost, slotID: slotID, epoch: epoch
+                ) else { return }
+            }
+        }
+        pendingSubAgentsFollow = (token, task)
+    }
+
+    /// Stops publishing the overview of the sub-agents at work: the slot runs
+    /// another session, or the window's work ends.
+    func stopFollowingPendingSubAgents() {
+        pendingSubAgentsFollow?.task.cancel()
+        pendingSubAgentsFollow = nil
+    }
+
+    /// The follow `token` ended; a newer one stays.
+    private func pendingSubAgentsFollowDidEnd(_ token: UUID) {
+        guard pendingSubAgentsFollow?.token == token else { return }
+        pendingSubAgentsFollow = nil
     }
 }
