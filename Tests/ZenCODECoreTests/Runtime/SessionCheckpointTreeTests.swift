@@ -129,6 +129,57 @@ struct SessionCheckpointTreeTests {
         #expect(merged.activeMessages[2].content == "How are you?")
     }
 
+    @Test
+    func mergingACompactedHistoryReplacesTheActivePathInsteadOfAppendingToIt() {
+        // A compaction rewrites the conversation: the new history shares
+        // nothing with the old one. Appending it to the old leaf would leave an
+        // active path that describes neither conversation, and would copy the
+        // whole history at every later save.
+        let tree = SessionCheckpointTree.fromLinearHistory(
+            [
+                AgentRuntimeMessage(role: .user, content: "Old question"),
+                AgentRuntimeMessage(role: .assistant, content: "Old answer"),
+                AgentRuntimeMessage(role: .user, content: "Old follow-up"),
+            ],
+            sessionID: "test"
+        )
+        let compacted = [
+            AgentRuntimeMessage(role: .assistant, content: "Compacted summary of the conversation"),
+            AgentRuntimeMessage(role: .user, content: "New question"),
+        ]
+
+        let merged = tree.mergingHistory(compacted)
+
+        #expect(merged.activeMessages.map(\.content) == compacted.map(\.content))
+        #expect(merged.entries.count == compacted.count)
+
+        // Saving the same conversation again adds nothing.
+        #expect(merged.mergingHistory(compacted).entries.count == compacted.count)
+    }
+
+    @Test
+    func mergingADivergingHistoryBranchesFromTheCommonPrefix() {
+        let first = [
+            AgentRuntimeMessage(role: .user, content: "Question"),
+            AgentRuntimeMessage(role: .assistant, content: "Answer one"),
+            AgentRuntimeMessage(role: .user, content: "Follow-up"),
+        ]
+        let tree = SessionCheckpointTree.fromLinearHistory(first, sessionID: "test")
+        let rewritten = [
+            AgentRuntimeMessage(role: .user, content: "Question"),
+            AgentRuntimeMessage(role: .assistant, content: "Answer two"),
+        ]
+
+        let merged = tree.mergingHistory(rewritten)
+
+        // The active path is the new conversation; the old answer stays as the
+        // abandoned branch it was.
+        #expect(merged.activeMessages.map(\.content) == rewritten.map(\.content))
+        #expect(merged.entries.count == first.count + 1)
+        let rootID = merged.entries[0].id
+        #expect(merged.entries.filter { $0.parentID == rootID }.count == 2)
+    }
+
     // MARK: - Codable round-trip
 
     @Test

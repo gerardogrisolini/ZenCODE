@@ -54,7 +54,9 @@ extension ZenCODEACPBridge {
     /// `createSession` suspends, so a `session/close` or `shutdown` can land
     /// inside it and re-create the session in the runner after the host already
     /// dropped it. When that happened, undo the resurrection before failing, so
-    /// no orphan runner session survives a closed ACP session.
+    /// no orphan runner session survives a closed ACP session. The failure is
+    /// `lifecycleOperationFenceError()`: an error response after a close, no
+    /// response after a shutdown.
     func ensureLifecycleOperationLiveAfterSessionWrite(
         _ operation: UInt64,
         sessionID: String
@@ -67,7 +69,7 @@ extension ZenCODEACPBridge {
         if sessions[sessionID] == nil {
             await sessionRunner.closeSession(id: sessionID)
         }
-        throw ACPShutdownFenceError()
+        throw lifecycleOperationFenceError()
     }
 
     /// Commits only the reconfiguration reserved by this operation. The ACP
@@ -75,7 +77,8 @@ extension ZenCODEACPBridge {
     /// out, then the reservation is released in the host: no prompt can
     /// observe the previous configuration under a released reservation. A
     /// reservation that is gone (the incarnation ended) commits nothing: the
-    /// entry is gone with it, or the write is undone.
+    /// entry is gone with it, or the write is undone, and the request fails
+    /// with `lifecycleOperationFenceError()`.
     func commitReconfiguration(
         _ reservation: ChatReconfigurationReservation,
         configuration: AgentCoreSessionConfiguration,
@@ -86,13 +89,13 @@ extension ZenCODEACPBridge {
             live = sessionState(configuration: configuration, selectedAgent: selectedAgent, inheriting: live)
         }
         guard written else {
-            throw ACPShutdownFenceError()
+            throw lifecycleOperationFenceError()
         }
         guard await host.releaseReconfiguration(reservation) else {
             if let previous {
                 updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { $0 = previous }
             }
-            throw ACPShutdownFenceError()
+            throw lifecycleOperationFenceError()
         }
     }
 
@@ -149,6 +152,13 @@ extension ZenCODEACPBridge {
         _ = try? await sessionRunner.createSession(
             configuration: originalSession.configuration
         )
+        // `createSession` suspends: a `session/close` or `shutdown` that landed
+        // inside it already dropped the iteration, so the runner session must
+        // not survive the rollback. A newer incarnation of the same id owns the
+        // runner session and is never touched.
+        if sessions[reservation.sessionID] == nil {
+            await sessionRunner.closeSession(id: reservation.sessionID)
+        }
         guard liveSession(id: reservation.sessionID, epoch: reservation.epoch) != nil,
               await host.holdsReconfiguration(reservation) else {
             return

@@ -88,6 +88,26 @@ struct ACPCommandRoutingTests {
         #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID) == nil)
     }
 
+    /// `/plan` needs the messaging tools on top of the sub-agent ones, so a
+    /// session that has only `agent.create`/`agent.wait` sees `/review` but not
+    /// `/plan`, which it would refuse. With `agent.message` both are offered.
+    @Test
+    func planIsAdvertisedOnlyWhenTheSessionCanRunIt() async throws {
+        let withoutMessaging = try await makeFixture(
+            sessionID: "acp-commands-plan-\(UUID().uuidString)",
+            allowedToolNames: ["local.read", "agent.create", "agent.wait"]
+        )
+        #expect(await withoutMessaging.bridge.commandNamesForGoalTesting(sessionID: withoutMessaging.sessionID)
+            == ["goal", "review", "tasks", "changes", "undo"])
+
+        let withMessaging = try await makeFixture(
+            sessionID: "acp-commands-plan-message-\(UUID().uuidString)",
+            allowedToolNames: ["local.read", "agent.create", "agent.wait", "agent.message"]
+        )
+        #expect(await withMessaging.bridge.commandNamesForGoalTesting(sessionID: withMessaging.sessionID)
+            == ["goal", "review", "plan", "tasks", "changes", "undo"])
+    }
+
     // MARK: - /tasks
 
     /// A turn that changes the graph publishes the plan while it runs, through
@@ -328,6 +348,25 @@ struct ACPCommandRoutingTests {
         await bridge.shutdown()
     }
 
+    /// The graph a turn changed reaches the client before the turn's reply:
+    /// nothing of the session follows the stop reason the client answers.
+    @Test
+    func thePlanOfTheTurnPrecedesItsReply() async throws {
+        let fixture = try await makeLiveFixture(sessionID: "acp-plan-order-\(UUID().uuidString)")
+        await fixture.backend.completeWorkflowDirectly()
+        try await fixture.bridge.prompt(id: .number(2), params: [
+            "sessionId": fixture.sessionID, "prompt": "/goal Complete the review surface",
+        ])
+        let timeline = fixture.wire.timeline()
+        let reply = try #require(timeline.firstIndex(of: "result:2"))
+        let planIndices = timeline.enumerated()
+            .filter { $0.element == "plan" }
+            .map(\.offset)
+        let lastPlan = try #require(planIndices.last)
+        #expect(lastPlan < reply)
+        await fixture.bridge.shutdown()
+    }
+
     /// The observer belongs to the incarnation, not to its configuration: a
     /// same-epoch reconstruction (a refresh, an `@mention`, a reconfiguration)
     /// keeps the running one instead of starting a second.
@@ -338,6 +377,22 @@ struct ACPCommandRoutingTests {
             sessionID: fixture.sessionID
         ))
         await fixture.bridge.shutdown()
+    }
+
+    /// A turn the model ended by asking for tools for the session's maximum
+    /// number of rounds answers with the ACP stop reason for it, not with a
+    /// JSON-RPC error response: the turn ended, the request did not fail.
+    @Test
+    func theToolRoundLimitEndsTheTurnAsAStopReason() async throws {
+        let fixture = try await makeFixture(
+            sessionID: "acp-tool-round-limit-\(UUID().uuidString)",
+            allowedToolNames: ["local.read"]
+        )
+        await fixture.backend.failNextTurn(with: .tooManyToolRounds(3))
+        try await fixture.bridge.prompt(id: .number(1), params: [
+            "sessionId": fixture.sessionID, "prompt": "Keep reading the files"
+        ])
+        #expect(fixture.wire.stopReason(for: 1) == "max_turn_requests")
     }
 
     /// The fixture of the command tests: a bridge on the scripted backend, its

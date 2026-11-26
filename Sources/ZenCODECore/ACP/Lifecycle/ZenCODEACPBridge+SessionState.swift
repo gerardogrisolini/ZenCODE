@@ -123,9 +123,10 @@ extension ZenCODEACPBridge {
     func sessionState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
-        incarnation: ChatSessionIncarnation
+        incarnation: ChatSessionIncarnation,
+        baseAllowedToolNames: Set<String>? = nil
     ) -> SessionState {
-        SessionState(
+        var session = SessionState(
             id: configuration.sessionID,
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
@@ -135,6 +136,8 @@ extension ZenCODEACPBridge {
             selectedAgent: selectedAgent,
             controller: incarnation.controller
         )
+        session.baseAllowedToolNames = baseAllowedToolNames
+        return session
     }
 
     /// The ACP state of the live incarnation `live` with another
@@ -151,7 +154,7 @@ extension ZenCODEACPBridge {
         selectedAgent: AgentProfile? = nil,
         inheriting live: SessionState
     ) -> SessionState {
-        SessionState(
+        var session = SessionState(
             id: configuration.sessionID,
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
@@ -174,6 +177,8 @@ extension ZenCODEACPBridge {
             promptDisplayTexts: live.promptDisplayTexts,
             controller: live.controller
         )
+        session.baseAllowedToolNames = live.baseAllowedToolNames
+        return session
     }
 
     /// Describes the selected runtime configuration without resolving a new
@@ -305,10 +310,15 @@ extension ZenCODEACPBridge {
     /// block its `agent_thought_chunk` and `agent_message_chunk`; tool calls,
     /// their results, and system messages are not replayed.
     public func replaySessionHistory(_ snapshot: AgentRuntimeSessionSnapshot) async {
+        // A prompt the session presents with the operator's text alone — the
+        // context Xcode sent before it removed — is replayed that way, as the
+        // saved session presents it (see `promptDisplayTexts`).
+        let displayTexts = sessions[snapshot.sessionID]?.promptDisplayTexts ?? [:]
         for kind in ChatTurnEntry.kinds(fromTranscript: snapshot.history) {
             switch kind {
             case let .userPrompt(text, attachments, _):
-                guard let text = Self.replayText(prompt: text, attachments: attachments) else {
+                let presented = displayTexts[text.trimmingCharacters(in: .whitespacesAndNewlines)] ?? text
+                guard let text = Self.replayText(prompt: presented, attachments: attachments) else {
                     continue
                 }
                 await sendUserMessageChunk(sessionID: snapshot.sessionID, text: text)

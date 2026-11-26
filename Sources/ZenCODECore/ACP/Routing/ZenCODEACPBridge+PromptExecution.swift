@@ -144,9 +144,19 @@ extension ZenCODEACPBridge {
             }
             fileChangeSummary = (error as? ChatTurnFailure)?.fileChangeSummary
             let underlying = (error as? ChatTurnFailure)?.underlying ?? error
-            outcome = underlying is CancellationError
-                ? .stopped(stopReason: "cancelled")
-                : .failed(Self.acpPromptError(for: underlying))
+            if underlying is CancellationError {
+                outcome = .stopped(stopReason: "cancelled")
+            } else if AgentToolRoundPolicy.isToolRoundLimit(underlying) {
+                // The model asked for tools for the session's maximum number of
+                // rounds. That is how the turn ended, not a failed request: the
+                // client reads it as the ACP stop reason for a turn the model
+                // did not finish, as the terminal shows it.
+                outcome = .stopped(
+                    stopReason: Self.acpStopReason("too_many_tool_rounds")
+                )
+            } else {
+                outcome = .failed(Self.acpPromptError(for: underlying))
+            }
         }
         // Settled once the outcome is known, after the planning text or the
         // brainstorming cleanup it may owe: the order the turn always had.

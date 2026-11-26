@@ -98,6 +98,24 @@ extension ACPCompatibilityTests {
         ])
 
         #expect(ACPConsentHost.permissionOptionID(from: value) == nil)
+        // A cancellation is the operator dismissing the request: the tool does
+        // not run and the model is told no decision was made, not that the
+        // operator said no.
+        #expect(ACPConsentHost.permissionOutcome(from: value) == .cancelled)
+
+        for reply in [
+            JSONValue.object(["optionId": .string("allow_once")]),
+            JSONValue.string("reject_always"),
+            JSONValue.object(["outcome": .object(["optionId": .string("allow_always")])]),
+        ] {
+            guard case .option = ACPConsentHost.permissionOutcome(from: reply) else {
+                Issue.record("\(reply.prettyPrinted()) must name an option")
+                continue
+            }
+        }
+        // No option and no cancellation stays a reply the agent cannot trust.
+        #expect(ACPConsentHost.permissionOutcome(from: .object([:])) == .unknown)
+        #expect(ACPConsentHost.permissionOutcome(from: nil) == .unknown)
     }
 
     @Test
@@ -226,7 +244,7 @@ extension ACPCompatibilityTests {
     }
 
     @Test
-    func imagePromptBlocksAreConvertedToAttachments() {
+    func imagePromptBlocksAreConvertedToAttachments() async {
         let promptBlocks: [Any] = [
             [
                 "type": "image",
@@ -234,7 +252,7 @@ extension ACPCompatibilityTests {
                 "data": "AQID"
             ] as [String: Any]
         ]
-        let attachments = ZenCODEACPBridge.promptAttachments(
+        let attachments = await ZenCODEACPBridge.promptAttachments(
             from: promptBlocks,
             renderedPromptText: "",
             cwd: "/tmp"
@@ -244,6 +262,66 @@ extension ACPCompatibilityTests {
         #expect(attachments.first?.kind == .image)
         #expect(attachments.first?.contentType == "image/png")
         #expect(attachments.first?.data == Data([1, 2, 3]))
+    }
+
+    /// A `resource` block is a file or blob of any type; only the media ones
+    /// are attachments. A PDF carries text, and sending it to a provider as an
+    /// image fails the turn.
+    @Test
+    func aNonMediaResourceIsNotAnImageAttachment() async {
+        let document: [Any] = [[
+            "type": "resource",
+            "resource": [
+                "mimeType": "application/pdf",
+                "blob": Data("%PDF-1.7".utf8).base64EncodedString(),
+            ],
+        ] as [String: Any]]
+        #expect(await ZenCODEACPBridge.promptAttachments(
+            from: document,
+            renderedPromptText: "",
+            cwd: "/tmp"
+        ).isEmpty)
+
+        let text: [Any] = [[
+            "type": "resource",
+            "resource": [
+                "mimeType": "text/plain",
+                "text": "notes",
+            ],
+        ] as [String: Any]]
+        #expect(await ZenCODEACPBridge.promptAttachments(
+            from: text,
+            renderedPromptText: "",
+            cwd: "/tmp"
+        ).isEmpty)
+
+        // A video resource is a video, not an image.
+        let video: [Any] = [[
+            "type": "resource",
+            "resource": [
+                "mimeType": "video/mp4",
+                "blob": Data([0, 0, 0, 1]).base64EncodedString(),
+            ],
+        ] as [String: Any]]
+        let videos = await ZenCODEACPBridge.promptAttachments(
+            from: video,
+            renderedPromptText: "",
+            cwd: "/tmp"
+        )
+        #expect(videos.first?.kind == .video)
+
+        let image: [Any] = [[
+            "type": "resource",
+            "resource": [
+                "mimeType": "image/png",
+                "blob": Data([1, 2, 3]).base64EncodedString(),
+            ],
+        ] as [String: Any]]
+        #expect(await ZenCODEACPBridge.promptAttachments(
+            from: image,
+            renderedPromptText: "",
+            cwd: "/tmp"
+        ).first?.kind == .image)
     }
 }
 

@@ -262,7 +262,7 @@ struct ACPFileChangeSummaryPresentationTests {
     /// blank lines separate from the answer, with highlighted `/undo` and
     /// `/changes` actions.
     private static func summaryText(of name: String) -> String {
-        "\n\n\n**🪬 Summary: 1 file  +1 -0**\n  added \(name)  +1 -0\n"
+        "\n\n\n**🪬 Summary: 1 file  +1 -0**\n  added `\(name)`  +1 -0\n"
             + "**`/undo`** to revert · **`/changes diff`** to show patches.\n"
     }
 
@@ -334,7 +334,7 @@ struct ACPFileChangeSummaryPresentationTests {
         #expect(update == ZenCODEACPBridge.textChunkJSONUpdate(
             kind: "agent_message_chunk",
             text: "\n\n\n**🪬 Summary: 1 file  +3 -1**\n"
-                + "  modified Sources/App.swift  +3 -1\n"
+                + "  modified `Sources/App.swift`  +3 -1\n"
                 + "**`/undo`** to revert · **`/changes diff`** to show patches.\n"
         ))
         #expect(update.objectValue?["sessionUpdate"] == .string("agent_message_chunk"))
@@ -346,12 +346,28 @@ struct ACPFileChangeSummaryPresentationTests {
                 .objectValue?["content"]?.objectValue?["text"]?.stringValue
         )
         #expect(text == "\n\n\n**🪬 Summary: 1 file  +3 -1**\n"
-            + "  modified Sources/App.swift  +3 -1\n"
+            + "  modified `Sources/App.swift`  +3 -1\n"
             + "Undo is not available for this summary.\n")
 
         // A turn that changed nothing presents nothing.
         #expect(ACPFileChangeSummaryPresentation.update(for: nil) == nil)
         #expect(ACPFileChangeSummaryPresentation.update(for: TurnFileChangeSummary(entries: [])) == nil)
+
+        // A path with Markdown of its own stays a path: it is a code span, and a
+        // backtick cannot close that span early.
+        let marked = TurnFileChangeSummary(entries: [
+            .init(
+                path: "Docs/_a_*b*.md", additions: 1, deletions: 0, status: .added,
+                isBinary: false, existedBefore: false, beforeDataBase64: nil, patch: nil
+            ),
+            .init(
+                path: "Odd`name.md", additions: 0, deletions: 1, status: .deleted,
+                isBinary: false, existedBefore: true, beforeDataBase64: nil, patch: nil
+            ),
+        ])
+        let markedText = ACPFileChangeSummaryPresentation.text(for: marked)
+        #expect(markedText.contains("  added `Docs/_a_*b*.md`  +1 -0\n"))
+        #expect(markedText.contains("  deleted `Odd'name.md`  +0 -1\n"))
     }
 
     /// The controller reports the Summary while the turn still runs, before the

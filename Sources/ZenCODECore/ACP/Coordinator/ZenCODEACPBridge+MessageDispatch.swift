@@ -93,14 +93,30 @@ extension ZenCODEACPBridge {
                 message: error.message
             )
         } catch is ACPShutdownFenceError {
-            // The transport is closing: deliberately send nothing. `shutdown()`
-            // already failed every pending host request, and writing a late
-            // response here is exactly the leak this fence prevents.
+            // Only a `shutdown()` ends here: the transport is closing, so
+            // deliberately send nothing. `shutdown()` already failed every
+            // pending host request, and writing a late response here is
+            // exactly the leak this fence prevents. A lifecycle operation
+            // whose incarnation a `session/close` (or a replacement of the
+            // same id) ended is an `ACPError` instead
+            // (`lifecycleOperationFenceError()`), answered above: the
+            // transport is open and JSON-RPC requires a response.
         } catch is CancellationError {
-            await writer.sendResultIfRequest(
-                id: id,
-                result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
-            )
+            // `session/prompt` is the only method whose contract defines a
+            // cancelled stop reason; every other request that unwinds by
+            // cancellation (the caller went away) is a JSON-RPC error.
+            if method == "session/prompt" {
+                await writer.sendResultIfRequest(
+                    id: id,
+                    result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
+                )
+            } else {
+                await writer.sendErrorIfRequest(
+                    id: id,
+                    code: -32800,
+                    message: "Request cancelled."
+                )
+            }
         } catch {
             await writer.sendErrorIfRequest(
                 id: id,

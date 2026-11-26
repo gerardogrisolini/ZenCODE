@@ -190,6 +190,21 @@ private extension ZenCODEACPBridge {
     func replaceIncarnationForTesting(_ configuration: AgentCoreSessionConfiguration) async throws {
         _ = try await installSession(configuration: configuration)
     }
+
+    /// Reserves the reconfiguration of `sessionID`, closes the session, and
+    /// rolls the reconfiguration back afterwards, as a `set_model` whose
+    /// runner rebuild suspends past a close does. Returns whether the close
+    /// dropped the session entry.
+    func closeThenRollbackReconfigurationForTesting(sessionID: String) async throws -> Bool {
+        guard let session = sessions[sessionID] else {
+            return false
+        }
+        let reservation = try await host.reserveReconfiguration(in: session.slotID)
+        try await close(id: .number(2), params: ["sessionId": sessionID])
+        let closed = sessions[sessionID] == nil
+        await rollbackReconfiguration(reservation, originalSession: session)
+        return closed
+    }
 }
 
 @Suite(.timeLimit(.minutes(1)))
@@ -368,8 +383,10 @@ struct ACPIncarnationCharacterizationTests {
         teardown.release.open()
         _ = try? await setModel.value
 
-        // The stale set neither answered nor reconfigured the replacement,
-        // which keeps answering prompts.
+        // The stale handler wrote nothing itself (it throws; the dispatcher is
+        // what answers it with an error, see `ACPShutdownCloseOutputTests`),
+        // and did not reconfigure the replacement, which keeps answering
+        // prompts.
         #expect(transport.responses(id: 3).isEmpty)
         #expect(await bridge.telegramTestConfiguration(sessionID: sessionID)?.modelID == "test-model")
         #expect(await bridge.testHasSession(sessionID: sessionID))
@@ -466,5 +483,28 @@ struct ACPIncarnationCharacterizationTests {
         #expect(await backend.prompts.contains { $0.contains("refused") } == false)
 
         await bridge.shutdown()
+    }
+
+    /// A reconfiguration whose rollback runs after the close ended the
+    /// incarnation rebuilds the runner configuration, but nothing of the
+    /// session survives: the close already tore the backend down, so the
+    /// rollback must not leave a runner session behind for an id that is gone.
+    @Test
+    func aRollbackAfterTheCloseDoesNotResurrectTheRunnerSession() async throws {
+        let transport = IncarnationTransport()
+        let backend = IncarnationBackend()
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+
+        try await bridge.newSession(id: .number(1), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+        // The incarnation creates its runner session on the first turn.
+        try await bridge.prompt(id: .number(3), params: ["sessionId": sessionID, "prompt": "warm up"])
+        #expect(await backend.snapshotSession(id: sessionID) != nil)
+
+        let closed = try await bridge.closeThenRollbackReconfigurationForTesting(sessionID: sessionID)
+
+        #expect(closed)
+        #expect(await backend.snapshotSession(id: sessionID) == nil)
+        #expect(await bridge.sessionRunner.snapshotSession(id: sessionID) == nil)
     }
 }

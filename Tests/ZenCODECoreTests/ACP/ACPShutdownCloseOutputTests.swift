@@ -9,7 +9,10 @@
 //    and a prompt arriving afterwards is abandoned without an error response;
 //  * `session/close` invalidates the lifecycle operations bound to that exact
 //    session incarnation, so a late `set_model` / `set_config_option` cannot
-//    answer success for a session the host already closed;
+//    answer success for a session the host already closed. Through the real
+//    dispatcher the request is answered with a JSON-RPC error (the transport
+//    is still open, and JSON-RPC requires a response); after `shutdown()`,
+//    whose transport is closing, it is abandoned without any answer;
 //  * an operation fenced by `shutdown()` does not rebuild the backend.
 //
 //  Every interleaving is pinned with gates placed on genuinely suspending
@@ -61,6 +64,11 @@ private final class RecordingTransport: Sendable {
             }
             return rawID.intValue == id
         }
+    }
+
+    /// The `error` member of the single reply carrying this id, if any.
+    func error(id: Int) -> [String: Any]? {
+        responses(id: id).first?["error"] as? [String: Any]
     }
 
     /// Messages that carry a JSON-RPC `error` member.
@@ -116,6 +124,20 @@ struct ACPShutdownCloseOutputTests {
             "allowedTools": [String]()
         ]
     }
+
+    /// The JSON-RPC request a client writes, for `bridge.handleMessage`.
+    private static func request(
+        _ id: Int,
+        _ method: String,
+        _ params: [String: Any]
+    ) -> [String: Any] {
+        ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
+    }
+
+    /// What a request fenced by a `session/close` (or a replacement of the
+    /// same id) is answered with.
+    private static let closedOrReplacedMessage =
+        "The session was closed or replaced before this request completed."
 
     // MARK: - In-flight prompt
 
@@ -193,7 +215,10 @@ struct ACPShutdownCloseOutputTests {
     func setModelSuspendedInRunnerDoesNotAnswerAfterClose() async throws {
         // Switching model forces the runner to drop its current backend, and
         // that teardown is pinned. A `session/close` for the same incarnation
-        // lands there; the stale `set_model` must not answer afterwards.
+        // lands there; the stale `set_model` must not answer success
+        // afterwards. The handler is called directly here, so it only throws:
+        // the error response is the dispatcher's, covered by
+        // `closeDuringASuspendedSetModelAnswersTheSetModelWithAnError`.
         let transport = RecordingTransport()
         let teardownGate = OutputFenceGate()
         let backend = OutputFenceBackend()
@@ -220,7 +245,7 @@ struct ACPShutdownCloseOutputTests {
         teardownGate.open()
         _ = try? await setModelTask.value
 
-        // The close was answered; the stale set was not.
+        // The close was answered; the direct handler wrote nothing.
         #expect(transport.responses(id: 9).count == 1)
         #expect(transport.responses(id: 8).isEmpty)
         #expect(await bridge.testHasSession(sessionID: sessionID) == false)
@@ -296,6 +321,193 @@ struct ACPShutdownCloseOutputTests {
         #expect(await bridge.isLifecycleOperationLive(boundOperation) == false)
         // Work that is not tied to the closed incarnation keeps running.
         #expect(await bridge.isLifecycleOperationLive(unboundOperation))
+    }
+
+    // MARK: - A fenced request is answered while the transport is open
+
+    @Test
+    func closeDuringASuspendedSetModelAnswersTheSetModelWithAnError() async throws {
+        // Routed through `handleMessage`, so the response (or its absence) is
+        // the dispatcher's. The `set_model` is pinned in the teardown of the
+        // outgoing backend; the `session/close` of its incarnation lands
+        // there. The transport is still open, so JSON-RPC requires the
+        // `set_model` to be answered, with an error, exactly once.
+        let transport = RecordingTransport()
+        let teardownGate = OutputFenceGate()
+        let backend = OutputFenceBackend()
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+
+        try await bridge.newSession(id: .number(22), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+        try await bridge.prompt(
+            id: .number(23),
+            params: ["sessionId": sessionID, "prompt": "warm up"]
+        )
+        await backend.setShutdownGate(teardownGate)
+
+        let setModelTask = Task {
+            await bridge.handleMessage(Self.request(
+                24,
+                "_zencode/session/set_model",
+                ["sessionId": sessionID, "modelId": "other-model"]
+            ))
+        }
+        await teardownGate.waitUntilReached()
+        #expect(transport.responses(id: 24).isEmpty)
+
+        await bridge.handleMessage(Self.request(
+            25,
+            "session/close",
+            ["sessionId": sessionID]
+        ))
+        teardownGate.open()
+        await setModelTask.value
+
+        // The close was answered with a result.
+        #expect(transport.responses(id: 25).count == 1)
+        #expect(transport.error(id: 25) == nil)
+        // The stale set was answered once, with an error and no result.
+        let setModelResponses = transport.responses(id: 24)
+        #expect(setModelResponses.count == 1)
+        #expect(setModelResponses.first?["result"] == nil)
+        let error = try #require(transport.error(id: 24))
+        #expect((error["code"] as? NSNumber)?.intValue == -32602)
+        #expect(error["message"] as? String == Self.closedOrReplacedMessage)
+        // Nothing else failed, and no session survived, in the bridge or in
+        // the runner (where the stale set had re-created it).
+        #expect(transport.errors.count == 1)
+        #expect(await bridge.testHasSession(sessionID: sessionID) == false)
+        #expect(await bridge.testRunnerHasSession(sessionID: sessionID) == false)
+    }
+
+    @Test
+    func closeDuringASuspendedSetConfigOptionAnswersTheRequestWithAnError() async throws {
+        // Same as above for `session/set_config_option` (`configId: "model"`),
+        // which shares the fence of `set_model`.
+        let transport = RecordingTransport()
+        let teardownGate = OutputFenceGate()
+        let backend = OutputFenceBackend()
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+
+        try await bridge.newSession(id: .number(26), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+        try await bridge.prompt(
+            id: .number(27),
+            params: ["sessionId": sessionID, "prompt": "warm up"]
+        )
+        await backend.setShutdownGate(teardownGate)
+
+        let setConfigTask = Task {
+            await bridge.handleMessage(Self.request(
+                28,
+                "session/set_config_option",
+                ["sessionId": sessionID, "configId": "model", "value": "other-model"]
+            ))
+        }
+        await teardownGate.waitUntilReached()
+        #expect(transport.responses(id: 28).isEmpty)
+
+        await bridge.handleMessage(Self.request(
+            29,
+            "session/close",
+            ["sessionId": sessionID]
+        ))
+        teardownGate.open()
+        await setConfigTask.value
+
+        #expect(transport.responses(id: 29).count == 1)
+        #expect(transport.error(id: 29) == nil)
+        let setConfigResponses = transport.responses(id: 28)
+        #expect(setConfigResponses.count == 1)
+        #expect(setConfigResponses.first?["result"] == nil)
+        let error = try #require(transport.error(id: 28))
+        #expect((error["code"] as? NSNumber)?.intValue == -32602)
+        #expect(error["message"] as? String == Self.closedOrReplacedMessage)
+        #expect(transport.errors.count == 1)
+        #expect(await bridge.testHasSession(sessionID: sessionID) == false)
+        #expect(await bridge.testRunnerHasSession(sessionID: sessionID) == false)
+    }
+
+    @Test
+    func shutdownDuringASuspendedSetModelWritesNothingToTheTransport() async throws {
+        // Negative control: the same suspended `set_model`, fenced by a
+        // `shutdown()` instead of a `session/close`. The transport is closing,
+        // so the request is abandoned: no result and no error response.
+        let transport = RecordingTransport()
+        let teardownGate = OutputFenceGate()
+        let backend = OutputFenceBackend()
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+
+        try await bridge.newSession(id: .number(30), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+        try await bridge.prompt(
+            id: .number(31),
+            params: ["sessionId": sessionID, "prompt": "warm up"]
+        )
+        await backend.setShutdownGate(teardownGate)
+
+        let setModelTask = Task {
+            await bridge.handleMessage(Self.request(
+                32,
+                "_zencode/session/set_model",
+                ["sessionId": sessionID, "modelId": "other-model"]
+            ))
+        }
+        await teardownGate.waitUntilReached()
+        let messagesBeforeShutdown = transport.all.count
+
+        // `shutdown()` may itself wait on the pinned teardown, so it runs
+        // beside the test; the fence latches before its first suspension.
+        let shutdownTask = Task { await bridge.shutdown() }
+        while await !bridge.isShutDown {
+            await Task.yield()
+        }
+        teardownGate.open()
+        await shutdownTask.value
+        await setModelTask.value
+
+        #expect(transport.all.count == messagesBeforeShutdown)
+        #expect(transport.responses(id: 32).isEmpty)
+        #expect(transport.errors.isEmpty)
+    }
+
+    @Test
+    func theLifecycleFenceErrorAnswersWhileTheTransportIsOpenAndStaysSilentAfterShutdown() async throws {
+        let bridge = try Self.makeBridge(
+            transport: RecordingTransport(),
+            backend: OutputFenceBackend()
+        )
+
+        // Open transport: a response is owed, so the failure is an ACP error.
+        let openError = try #require(await bridge.lifecycleOperationFenceError() as? ACPError)
+        #expect(openError.code == -32602)
+        #expect(openError.message == Self.closedOrReplacedMessage)
+
+        // Closing transport: the failure is the silent shutdown fence.
+        await bridge.shutdown()
+        #expect(await bridge.lifecycleOperationFenceError() is ACPShutdownFenceError)
+    }
+
+    // MARK: - A request that unwinds by cancellation
+
+    @Test
+    func aCancelledRequestThatIsNotAPromptAnswersAJSONRPCError() async throws {
+        // Only `session/prompt` has a cancelled stop reason in ACP. A request
+        // that unwinds by cancellation, here a preload whose model call was
+        // cancelled, is a JSON-RPC cancellation error instead.
+        let transport = RecordingTransport()
+        let bridge = try Self.makeBridge(
+            transport: transport,
+            backend: OutputFenceBackend(preloadCancels: true)
+        )
+
+        await bridge.handleMessage(Self.request(33, "_zencode/model/preload", [:]))
+
+        let responses = transport.responses(id: 33)
+        #expect(responses.count == 1)
+        #expect(responses.first?["result"] == nil)
+        let error = try #require(transport.error(id: 33))
+        #expect((error["code"] as? NSNumber)?.intValue == -32800)
     }
 
     // MARK: - Stale work rebuilds nothing
@@ -417,6 +629,7 @@ struct ACPShutdownCloseOutputTests {
 private actor OutputFenceBackend: AgentRuntimeBackend {
     private let promptGate: OutputFenceGate?
     private let preloadGate: OutputFenceGate?
+    private let preloadCancels: Bool
     private let eventsBeforeGate: [String]
     private let eventsAfterGate: [String]
     private var shutdownGate: OutputFenceGate?
@@ -425,11 +638,13 @@ private actor OutputFenceBackend: AgentRuntimeBackend {
     init(
         promptGate: OutputFenceGate? = nil,
         preloadGate: OutputFenceGate? = nil,
+        preloadCancels: Bool = false,
         eventsBeforeGate: [String] = [],
         eventsAfterGate: [String] = []
     ) {
         self.promptGate = promptGate
         self.preloadGate = preloadGate
+        self.preloadCancels = preloadCancels
         self.eventsBeforeGate = eventsBeforeGate
         self.eventsAfterGate = eventsAfterGate
     }
@@ -506,6 +721,9 @@ private actor OutputFenceBackend: AgentRuntimeBackend {
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
         await preloadGate?.arriveAndWait()
+        if preloadCancels {
+            throw CancellationError()
+        }
         return "test-model"
     }
 

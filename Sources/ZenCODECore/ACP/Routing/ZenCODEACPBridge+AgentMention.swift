@@ -108,21 +108,22 @@ extension ZenCODEACPBridge {
         return nil
     }
 
+    /// The configuration of the live `session` routed to `agent` for the rest of
+    /// the turn, keeping what the session was granted and narrowing it by the
+    /// agent's policy, exactly as `session/new` composed it: the client
+    /// request's own grant, the tools of the MCP servers the client provided,
+    /// and the prompt-skill tools, then ``AgentProfile/resolvedAllowedToolNames(_:)``.
+    /// Reading the grant back from the session's current configuration would
+    /// drop the servers and the request's restriction, and could widen it.
     func acpSessionConfiguration(
         applying agent: AgentProfile,
-        to baseConfiguration: AgentCoreSessionConfiguration
-    ) async -> AgentCoreSessionConfiguration {
-        var allowedToolNames = await resolvedAllowedToolNames(
-            agent.allowedToolNames(),
-            workingDirectory: baseConfiguration.workingDirectory
+        to session: SessionState
+    ) -> AgentCoreSessionConfiguration {
+        let baseConfiguration = session.configuration
+        let allowedToolNames = Self.narrowedSessionAllowedToolNames(
+            session.baseAllowedToolNames ?? baseConfiguration.allowedToolNames,
+            selectedAgent: agent
         )
-        if var effectiveAllowedToolNames = allowedToolNames {
-            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
-            allowedToolNames = effectiveAllowedToolNames
-        }
-        if let effectiveAllowedToolNames = allowedToolNames {
-            allowedToolNames = agent.resolvedAllowedToolNames(effectiveAllowedToolNames)
-        }
         let modelID = agent.modelID ?? baseConfiguration.modelID
         let promptSections = AgentCoreAppSessionFactory.resolvedPromptSections(
             providedSystemPrompt: nil,
@@ -152,6 +153,35 @@ extension ZenCODEACPBridge {
             thinkingSelection: baseConfiguration.thinkingSelection,
             preserveThinking: baseConfiguration.preserveThinking
         )
+    }
+
+    /// Routes the incarnation `epoch` of `sessionID` to `agent`: the session
+    /// keeps its epoch, reservation, and controller, and only the
+    /// configuration changes. `nil` (and no change) when the incarnation is
+    /// gone.
+    ///
+    /// Call it only once the turn's line was admitted: a line the slot refused
+    /// changes nothing (see ``routeACPCommandTurn``).
+    func applyACPAgentMention(
+        _ agent: AgentProfile,
+        sessionID: String,
+        epoch: UInt64
+    ) -> SessionState? {
+        guard let session = liveSession(id: sessionID, epoch: epoch) else {
+            return nil
+        }
+        let configuration = acpSessionConfiguration(applying: agent, to: session)
+        let isLive = updateLiveSession(id: sessionID, epoch: epoch) { live in
+            live = sessionState(
+                configuration: configuration,
+                selectedAgent: agent,
+                inheriting: live
+            )
+        }
+        guard isLive else {
+            return nil
+        }
+        return liveSession(id: sessionID, epoch: epoch)
     }
 
     static func acpAgentMentionLookupKeys(for agent: AgentProfile) -> Set<String> {

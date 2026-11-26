@@ -16,6 +16,20 @@ import Foundation
 import Synchronization
 
 public final class StdioLineReader: Sendable {
+    /// The bytes read but not yet returned, with the cursor of the scan for
+    /// their next newline.
+    ///
+    /// A line arrives in 4 KB reads, and a large one — a base64 image in an ACP
+    /// prompt — takes thousands of them. Rescanning the whole buffer after every
+    /// read is quadratic, so the scan resumes where it stopped: each byte is
+    /// examined once. The cursor is an offset into `bytes` and is reset whenever
+    /// bytes leave the front of the buffer.
+    private struct LineBuffer: Sendable {
+        var bytes: [UInt8] = []
+        /// The bytes already searched for a newline that is not there yet.
+        var searchedBytes = 0
+    }
+
     /// Outcome of a single `read(2)` attempt on the input descriptor.
     private enum ReadOutcome {
         /// Bytes were appended to the buffer.
@@ -38,10 +52,14 @@ public final class StdioLineReader: Sendable {
     /// cursor, so protecting only the byte buffer still lets concurrent callers
     /// steal each other's ready byte between `poll(2)` and `read(2)`.
     private let readOperation = Mutex<Void>(())
-    private let buffer = Mutex<[UInt8]>([])
+    private let buffer = Mutex<LineBuffer>(LineBuffer())
     /// Latches once the descriptor reports EOF/HUP/ERR so later `readLine`
     /// calls drain the remainder and stop instead of polling a dead fd.
     private let didReachEndOfInput = Mutex<Bool>(false)
+    /// Number of buffered bytes the newline scan examined, so a test can assert
+    /// that a long line is searched once instead of from the start after every
+    /// chunk (see ``LineBuffer/searchedBytes``).
+    private let scannedBytes = Mutex<UInt64>(0)
     /// Number of times a read or drain has waited in `poll`.
     ///
     /// Makes "this reader is blocked waiting for input" observable instead of
@@ -68,6 +86,13 @@ public final class StdioLineReader: Sendable {
     /// How many times this reader has entered a `poll` wait.
     var pollWaitCount: UInt64 {
         pollWaits.withLock { $0 }
+    }
+
+    /// How many buffered bytes the newline scan examined. Each byte belongs to
+    /// one line, so reading `n` bytes scans them about once: a value that grows
+    /// with the square of a long line's length means the scan restarted.
+    var scannedByteCount: UInt64 {
+        scannedBytes.withLock { $0 }
     }
 
     /// Cancellation-aware read used by the off-actor bridges.
@@ -196,23 +221,27 @@ public final class StdioLineReader: Sendable {
         // latency already paid, instead of paying for an extraction whose
         // output is thrown away.
         if Task.isCancelled || shouldCancel?() == true {
-            buffer.withLock { $0.removeAll() }
+            buffer.withLock { buffer in
+                buffer.bytes.removeAll()
+                buffer.searchedBytes = 0
+            }
             return []
         }
 
         return buffer.withLock { buffer in
             var lines: [String] = []
-            var sliceStart = buffer.startIndex
-            for index in buffer.indices {
-                if buffer[index] == 0x0a {
-                    lines.append(Self.string(fromLineBytes: Array(buffer[sliceStart..<index])))
-                    sliceStart = buffer.index(after: index)
+            var sliceStart = buffer.bytes.startIndex
+            for index in buffer.bytes.indices {
+                if buffer.bytes[index] == 0x0a {
+                    lines.append(Self.string(fromLineBytes: Array(buffer.bytes[sliceStart..<index])))
+                    sliceStart = buffer.bytes.index(after: index)
                 }
             }
-            if sliceStart < buffer.endIndex {
-                lines.append(Self.string(fromLineBytes: Array(buffer[sliceStart..<buffer.endIndex])))
+            if sliceStart < buffer.bytes.endIndex {
+                lines.append(Self.string(fromLineBytes: Array(buffer.bytes[sliceStart..<buffer.bytes.endIndex])))
             }
-            buffer.removeAll()
+            buffer.bytes.removeAll()
+            buffer.searchedBytes = 0
             return lines
         }
     }
@@ -230,7 +259,7 @@ public final class StdioLineReader: Sendable {
         if readCount > 0 {
             let chunk = Array(bytes.prefix(readCount))
             buffer.withLock { buffer in
-                buffer.append(contentsOf: chunk)
+                buffer.bytes.append(contentsOf: chunk)
             }
             return .bytesRead
         }
@@ -247,22 +276,30 @@ public final class StdioLineReader: Sendable {
 
     private func takeBufferedLine() -> String? {
         buffer.withLock { buffer in
-            guard let newlineIndex = buffer.firstIndex(of: 0x0a) else {
+            // Resume the previous scan: a line that spans thousands of reads
+            // must not be searched from its start again at every read.
+            let searchStart = min(buffer.searchedBytes, buffer.bytes.count)
+            guard let newlineIndex = buffer.bytes[searchStart...].firstIndex(of: 0x0a) else {
+                scannedBytes.withLock { $0 &+= UInt64(buffer.bytes.count - searchStart) }
+                buffer.searchedBytes = buffer.bytes.count
                 return nil
             }
-            let lineBytes = Array(buffer[..<newlineIndex])
-            buffer.removeSubrange(...newlineIndex)
+            scannedBytes.withLock { $0 &+= UInt64(newlineIndex - searchStart + 1) }
+            let lineBytes = Array(buffer.bytes[..<newlineIndex])
+            buffer.bytes.removeSubrange(...newlineIndex)
+            buffer.searchedBytes = 0
             return Self.string(fromLineBytes: lineBytes)
         }
     }
 
     private func takeBufferedRemainder() -> String? {
         buffer.withLock { buffer in
-            guard !buffer.isEmpty else {
+            guard !buffer.bytes.isEmpty else {
                 return nil
             }
-            let lineBytes = buffer
-            buffer.removeAll()
+            let lineBytes = buffer.bytes
+            buffer.bytes.removeAll()
+            buffer.searchedBytes = 0
             return Self.string(fromLineBytes: lineBytes)
         }
     }

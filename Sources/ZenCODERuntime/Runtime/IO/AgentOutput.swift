@@ -54,6 +54,17 @@ public enum AgentOutput {
         redirectToNull([STDOUT_FILENO, STDERR_FILENO])
     }
 
+    /// Redirects the inherited standard output descriptor to `/dev/null`, after
+    /// preserving ``standardOutput``: a program that owns the descriptor for its
+    /// own protocol (ACP writes JSON-RPC on stdout) keeps writing through the
+    /// preserved handle, while a child process or an in-process engine that
+    /// writes to `STDOUT_FILENO` cannot corrupt the stream.
+    public static func silenceInheritedStandardOutput() {
+        _ = standardOutput
+
+        redirectToNull([STDOUT_FILENO])
+    }
+
     public static func silenceInheritedProcessError() {
         _ = standardError
 

@@ -18,12 +18,19 @@ extension ZenCODEACPBridge {
             "input": .object(["hint": .string("Goal to achieve")])
         ])]
         if acpSubAgentsAreAvailable(in: session) {
-            for (name, description) in [("review", "Review with delegated agents"), ("plan", "Create or manage a plan")] {
-                commands.append(.object([
-                    "name": .string(name), "description": .string(description),
-                    "input": .object(["hint": .string("Instructions or subcommand")])
-                ]))
-            }
+            commands.append(.object([
+                "name": .string("review"), "description": .string("Review with delegated agents"),
+                "input": .object(["hint": .string("Instructions or subcommand")])
+            ]))
+        }
+        // `/plan` starts a Planner discussion, which needs the messaging tools
+        // as well: advertising it to a session that would refuse it only makes
+        // the client offer a command that cannot run.
+        if acpSubAgentsAreAvailable(in: session, requiresMessaging: true) {
+            commands.append(.object([
+                "name": .string("plan"), "description": .string("Create or manage a plan"),
+                "input": .object(["hint": .string("Instructions or subcommand")])
+            ]))
         }
         commands.append(.object([
             "name": .string("tasks"),

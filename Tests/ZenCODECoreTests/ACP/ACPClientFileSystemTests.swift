@@ -137,6 +137,43 @@ struct ACPClientFileSystemTests {
         #expect(recorder.changes.isEmpty)
     }
 
+    /// ACP v1 lets the client acknowledge a write with a response object that
+    /// carries `_meta`. It is a successful write, with its diff, not a failed
+    /// one that invites a blind retry.
+    @Test func writeAcknowledgedWithAResponseObjectCarryingMetaSucceeds() async throws {
+        let fixture = FileSystemClientFixture(
+            files: ["/tmp/file.swift": "before"],
+            behavior: .metaAcknowledgment
+        )
+        let harness = FileSystemHarness(fixture: fixture)
+        defer { harness.stop() }
+        let recorder = OperationFileChangeRecorder()
+        let write = try #require(harness.client.access(sessionID: "root") { true }.write)
+        try await OperationFileChangeRecorder.$current.withValue(recorder) {
+            try await write(URL(fileURLWithPath: "/tmp/file.swift"), "after")
+        }
+        #expect(await fixture.text(at: "/tmp/file.swift") == "after")
+        #expect(
+            recorder.changes == [.init(path: "/tmp/file.swift", oldText: "before", newText: "after")]
+        )
+    }
+
+    /// A file the client does not have is new: its diff is the content the
+    /// write created, not "Diff unavailable". The client's `-32002` is what
+    /// tells the two apart.
+    @Test func aNewClientFileIsPresentedAsAnAddition() async throws {
+        let fixture = FileSystemClientFixture(files: [:])
+        let harness = FileSystemHarness(fixture: fixture)
+        defer { harness.stop() }
+        let recorder = OperationFileChangeRecorder()
+        let write = try #require(harness.client.access(sessionID: "root") { true }.write)
+        try await OperationFileChangeRecorder.$current.withValue(recorder) {
+            try await write(URL(fileURLWithPath: "/tmp/new.swift"), "created")
+        }
+        #expect(await fixture.text(at: "/tmp/new.swift") == "created")
+        #expect(recorder.changes == [.init(path: "/tmp/new.swift", oldText: "", newText: "created")])
+    }
+
     @Test func concurrentClientChangeAbortsBeforeWrite() async throws {
         let fixture = FileSystemClientFixture(files: ["/tmp/file.swift": "before"], behavior: .changeBeforeWrite)
         let harness = FileSystemHarness(fixture: fixture)
@@ -312,7 +349,7 @@ private struct FileSystemHarness {
 }
 
 private actor FileSystemClientFixture {
-    enum Behavior { case normal, deny, denyWrite, malformedRead, changeBeforeWrite, changeAfterWrite, stall }
+    enum Behavior { case normal, deny, denyWrite, malformedRead, changeBeforeWrite, changeAfterWrite, stall, metaAcknowledgment }
     private var files: [String: String]
     private let behavior: Behavior
     private var readCount = 0
@@ -345,13 +382,17 @@ private actor FileSystemClientFixture {
             } else if let text = files[path] {
                 result = .object(["content": .string(text)])
             } else {
-                return error(id)
+                return missingFileError(id)
             }
         } else {
             guard let text = params["content"]?.stringValue else { return error(id) }
             writeCount += 1
             files[path] = text
-            result = .null
+            // ACP v1 acknowledges a write with a response object that may carry
+            // `_meta`, not only with `null`.
+            result = behavior == .metaAcknowledgment
+                ? .object(["_meta": .object(["source": .string("client")])])
+                : .null
         }
         return .object(["jsonrpc": .string("2.0"), "id": id, "result": result])
     }
@@ -359,6 +400,13 @@ private actor FileSystemClientFixture {
         .object([
             "jsonrpc": .string("2.0"), "id": id,
             "error": .object(["code": .number(-32000), "message": .string("Client file unavailable")]),
+        ])
+    }
+    /// What a client that follows ACP answers a read of a path it does not have.
+    private func missingFileError(_ id: JSONValue) -> JSONValue {
+        .object([
+            "jsonrpc": .string("2.0"), "id": id,
+            "error": .object(["code": .number(-32002), "message": .string("Resource not found")]),
         ])
     }
 }

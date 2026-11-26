@@ -52,9 +52,12 @@ extension ZenCODEACPBridge {
         ) { incarnation, acpMCPDescriptors in
             let cacheKey = (params["sessionKey"] as? String)
                 ?? (params["cacheKey"] as? String)
-            let allowedToolNames = Self.sessionAllowedToolNames(
+            let baseAllowedToolNames = Self.sessionBaseAllowedToolNames(
                 resolvedRequestedAllowedToolNames,
-                adding: acpMCPDescriptors,
+                adding: acpMCPDescriptors
+            )
+            let allowedToolNames = Self.narrowedSessionAllowedToolNames(
+                baseAllowedToolNames,
                 selectedAgent: selectedAgent
             )
             try ensureLifecycleOperationLive(operation)
@@ -98,6 +101,7 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 configuration: runnerConfiguration,
                 selectedAgent: selectedAgent,
+                baseAllowedToolNames: baseAllowedToolNames,
                 operation: operation
             )
             // A runner session that cannot be created leaves no session
@@ -206,6 +210,7 @@ extension ZenCODEACPBridge {
         sessionID: String,
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile?,
+        baseAllowedToolNames: Set<String>? = nil,
         savedSessionLink: ACPSavedSessionLink? = nil,
         promptDisplayTexts: [String: String] = [:],
         operation: UInt64
@@ -214,7 +219,8 @@ extension ZenCODEACPBridge {
         var sessionEntry = sessionState(
             configuration: configuration,
             selectedAgent: selectedAgent,
-            incarnation: incarnation
+            incarnation: incarnation,
+            baseAllowedToolNames: baseAllowedToolNames
         )
         sessionEntry.savedSessionLink = savedSessionLink
         sessionEntry.promptDisplayTexts = promptDisplayTexts
@@ -222,14 +228,12 @@ extension ZenCODEACPBridge {
         bindLifecycleOperation(operation, sessionID: sessionID, epoch: incarnation.epoch)
     }
 
-    /// The tools of a new ACP session: the resolved request, with the tools
-    /// of the MCP servers the session provided and the prompt-skill tools,
-    /// then narrowed by the selected agent. `nil` (no restriction) stays
-    /// `nil`.
-    private static func sessionAllowedToolNames(
+    /// The session's own tool grant, before the selected agent narrows it: the
+    /// resolved request, with the tools of the MCP servers the session provided
+    /// and the prompt-skill tools. `nil` (no restriction) stays `nil`.
+    static func sessionBaseAllowedToolNames(
         _ resolvedRequestedAllowedToolNames: Set<String>?,
-        adding acpMCPDescriptors: [DirectToolDescriptor],
-        selectedAgent: AgentProfile?
+        adding acpMCPDescriptors: [DirectToolDescriptor]
     ) -> Set<String>? {
         var allowedToolNames = Self.allowedToolNames(
             resolvedRequestedAllowedToolNames,
@@ -239,12 +243,19 @@ extension ZenCODEACPBridge {
             effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
             allowedToolNames = effectiveAllowedToolNames
         }
-        if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
-            allowedToolNames = selectedAgent.resolvedAllowedToolNames(
-                effectiveAllowedToolNames
-            )
-        }
         return allowedToolNames
+    }
+
+    /// The session's own tool grant narrowed by `selectedAgent`'s policy: the
+    /// recomposition an agent mention applies to a live session.
+    static func narrowedSessionAllowedToolNames(
+        _ baseAllowedToolNames: Set<String>?,
+        selectedAgent: AgentProfile?
+    ) -> Set<String>? {
+        guard let selectedAgent, let effectiveAllowedToolNames = baseAllowedToolNames else {
+            return baseAllowedToolNames
+        }
+        return selectedAgent.resolvedAllowedToolNames(effectiveAllowedToolNames)
     }
 
     public func resolvedAllowedToolNames(
@@ -317,7 +328,12 @@ extension ZenCODEACPBridge {
                 id: id,
                 result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
             )
-            try ensureLifecycleOperationLive(operation)
+            // The reply is written, so a close or shutdown that lands now owes
+            // it nothing: a second response for the same id is never written,
+            // and neither is an update for a session that is gone.
+            guard isLifecycleOperationLive(operation) else {
+                return
+            }
             await sendSessionInfoUpdate(
                 sessionID: sessionID,
                 title: URL(fileURLWithPath: session.cwd).lastPathComponent
@@ -329,6 +345,18 @@ extension ZenCODEACPBridge {
             return
         }
 
+        // The id is claimed here, in the same synchronous step that found it not
+        // live: a second `session/load` or `session/resume` of the same id while
+        // this one opens it would open a second incarnation, whose host slot,
+        // MCP servers, and task-graph observer would be orphaned by the entry
+        // the last one publishes. The claim is released by the `defer` on every
+        // exit — success, error, close, shutdown — and a close or a delete of
+        // the id invalidates the operation, so this restore answers with an
+        // error after cleaning its own incarnation up.
+        guard reserveSessionRestore(sessionID, operation: operation) else {
+            throw ACPError.invalidParams(Self.sessionRestoreBusyMessage(sessionID))
+        }
+        defer { releaseSessionRestore(sessionID, operation: operation) }
         let rawCwd = Self.workingDirectory(from: params)
             ?? configuration.workingDirectory.path
         let workingDirectory = AgentConfiguration.resolvedWorkingDirectory(
@@ -364,7 +392,7 @@ extension ZenCODEACPBridge {
             requestedAllowedToolNames: requestedAllowedToolNames,
             operation: operation
         ) { incarnation, acpMCPDescriptors in
-            let configuration = await restoredACPClientSessionConfiguration(
+            let restored = await restoredACPClientSessionConfiguration(
                 sessionID: sessionID,
                 params: params,
                 workingDirectory: workingDirectory,
@@ -372,6 +400,7 @@ extension ZenCODEACPBridge {
                 selectedAgent: selectedAgent,
                 savedSession: savedSession
             )
+            let configuration = restored.configuration
             try ensureLifecycleOperationLive(operation)
             // Past the last fence the session entry, the runner session, the
             // history replay and the reply become observable. The saved
@@ -382,6 +411,7 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 configuration: configuration,
                 selectedAgent: selectedAgent,
+                baseAllowedToolNames: restored.baseAllowedToolNames,
                 savedSessionLink: savedSession.map {
                     ACPSavedSessionLink(
                         name: $0.name,
@@ -422,7 +452,12 @@ extension ZenCODEACPBridge {
             id: id,
             result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
         )
-        try ensureLifecycleOperationLive(operation)
+        // The reply is written: as in the restore of a live id, a close or
+        // shutdown that lands now writes no second response for this request
+        // and no update for a session that is gone.
+        guard isLifecycleOperationLive(operation) else {
+            return
+        }
         await sendSessionInfoUpdate(
             sessionID: sessionID,
             title: workingDirectory.lastPathComponent
@@ -483,7 +518,7 @@ extension ZenCODEACPBridge {
         acpMCPDescriptors: [DirectToolDescriptor],
         selectedAgent: AgentProfile?,
         savedSession: TerminalSavedSession?
-    ) async -> AgentCoreSessionConfiguration {
+    ) async -> (configuration: AgentCoreSessionConfiguration, baseAllowedToolNames: Set<String>?) {
         let requestedModelID = Self.modelID(from: params)
         let savedModelID = requestedModelID == nil
             ? savedSession?.modelID.flatMap { modelCatalog.containsModel(withID: $0) ? $0 : nil }
@@ -497,9 +532,12 @@ extension ZenCODEACPBridge {
             requestedAllowedToolNames,
             workingDirectory: workingDirectory
         )
-        let allowedToolNames = Self.sessionAllowedToolNames(
+        let baseAllowedToolNames = Self.sessionBaseAllowedToolNames(
             resolvedRequestedAllowedToolNames,
-            adding: acpMCPDescriptors,
+            adding: acpMCPDescriptors
+        )
+        let allowedToolNames = Self.narrowedSessionAllowedToolNames(
+            baseAllowedToolNames,
             selectedAgent: selectedAgent
         )
         let promptSections = resolvedPromptSections(
@@ -533,7 +571,7 @@ extension ZenCODEACPBridge {
             ? savedSession.map { AgentRuntimeDynamicContext.separating(from: $0.history).history } ?? []
             : clientHistory
 
-        return AgentCoreSessionConfiguration(
+        return (AgentCoreSessionConfiguration(
             sessionID: sessionID,
             modelID: modelID,
             agentID: selectedAgent?.id,
@@ -550,7 +588,7 @@ extension ZenCODEACPBridge {
             appMode: configuration.appMode,
             thinkingSelection: thinkingSelection,
             preserveThinking: preserveThinking
-        )
+        ), baseAllowedToolNames)
     }
 
     public func sessionLifecycleResult(sessionID: String) -> [String: Any] {

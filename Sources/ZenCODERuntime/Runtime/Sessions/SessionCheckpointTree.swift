@@ -158,19 +158,62 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
 
     // MARK: - History merge and bootstrap
 
-    /// Returns a new tree with `newMessages` appended after the messages
-    /// already present on the active-leaf path.  Messages that match the
-    /// existing path (compared by role + content prefix) are skipped so the
-    /// merge is idempotent across repeated saves.
+    /// Returns a new tree whose active path holds `newMessages`.
+    ///
+    /// A history that extends the active path appends only the new messages, so
+    /// repeated saves of the same conversation are idempotent. A history that
+    /// diverges (a compaction rewrote the conversation) must not be appended to
+    /// the current leaf: that would leave the active path describing a
+    /// conversation that no longer exists, and would copy the whole history onto
+    /// the tree at every save. The diverging branch starts at the entry of the
+    /// common prefix instead; with no common prefix at all — a compacted
+    /// conversation shares nothing with the old one — the tree becomes the new
+    /// linear history.
     public func mergingHistory(_ newMessages: [AgentRuntimeMessage]) -> SessionCheckpointTree {
         let existingMessages = activeMessages
         let matchCount = Self.commonPrefixCount(existingMessages, newMessages)
         guard matchCount < newMessages.count else { return self }
         var updated = self
+        if matchCount < existingMessages.count {
+            switch updated.branchPoint(afterMessages: matchCount) {
+            case .restart:
+                return SessionCheckpointTree.fromLinearHistory(newMessages, sessionID: sessionID)
+            case let .entry(entryID):
+                updated.navigate(to: entryID)
+            }
+        }
         for message in newMessages.dropFirst(matchCount) {
             updated.append(.message(message))
         }
         return updated
+    }
+
+    /// Where a branch that diverges from the active path starts.
+    private enum HistoryMergeBranchPoint {
+        /// The entry of the last message the two histories share.
+        case entry(String)
+        /// Nothing is shared: the tree starts over from the new history.
+        case restart
+    }
+
+    /// The entry the active path holds after its first `messageCount` messages:
+    /// a branch that diverges there starts from it. A prefix with no message at
+    /// all shares nothing with the new history.
+    private func branchPoint(afterMessages messageCount: Int) -> HistoryMergeBranchPoint {
+        guard messageCount > 0 else { return .restart }
+        var seen = 0
+        for entry in path(from: activeLeafID) {
+            switch entry.kind {
+            case .message, .branchSummary:
+                seen += 1
+                if seen == messageCount {
+                    return .entry(entry.id)
+                }
+            case .modelChange:
+                continue
+            }
+        }
+        return .restart
     }
 
     private static func commonPrefixCount(

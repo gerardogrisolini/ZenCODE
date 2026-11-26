@@ -185,6 +185,47 @@ struct StdioLineReaderTests {
     }
 
     @Test
+    func aLongLineIsScannedOnceInsteadOfFromItsStartAtEveryChunk() async throws {
+        let pipe = Self.makePipe()
+        let reader = StdioLineReader(fileDescriptor: pipe.read)
+        _ = fcntl(pipe.write, F_SETFL, fcntl(pipe.write, F_GETFL, 0) | O_NONBLOCK)
+
+        // A base64 image in an ACP prompt arrives as one line in 4 KB reads.
+        // Every read that found no newline must resume the scan where the last
+        // one stopped: rescanning the whole buffer made the cost quadratic.
+        let lineLength = 512 * 1024
+        let payload = String(repeating: "a", count: lineLength)
+        let producerDidExit = TerminalTestSignal()
+        let producer = Thread {
+            let bytes = Array(payload.utf8) + [0x0a]
+            var offset = 0
+            while offset < bytes.count {
+                let written = bytes.withUnsafeBufferPointer { buffer in
+                    write(pipe.write, buffer.baseAddress! + offset, min(4096, bytes.count - offset))
+                }
+                if written <= 0 {
+                    Thread.sleep(forTimeInterval: 0.001)
+                    continue
+                }
+                offset += written
+            }
+            producerDidExit.signal()
+        }
+        producer.start()
+
+        let line = await TerminalBlockingRead.run { _ in
+            reader.readLine(shouldCancel: { false })
+        }
+        await producerDidExit.wait()
+        close(pipe.write)
+        defer { close(pipe.read) }
+
+        #expect(line?.count == lineLength)
+        // Each byte is examined once, plus the newline that ends the line.
+        #expect(reader.scannedByteCount <= UInt64(lineLength) * 2)
+    }
+
+    @Test
     func drainWithAnUncancelledTokenStillReturnsPendingInput() throws {
         let pipe = Self.makePipe()
         defer { close(pipe.read) }

@@ -79,6 +79,17 @@ public enum AgentRuntimeLauncher {
         backendFactory: AgentRuntimeBackendFactory? = nil,
         setupRequired: Bool = false
     ) async {
+        // Before the first write: a client that closes the transport must make
+        // our answers fail with `EPIPE` (which `ACPWriter` drops) instead of
+        // raising `SIGPIPE`, whose default action kills the process before
+        // `shutdown()` can run. Feature processes and MCP servers install the
+        // same disposition, but only once one of them starts.
+        SystemCrontabClient.suppressSIGPIPE(on: AgentOutput.standardOutput)
+        // stdout belongs to the ACP stream: the handle below keeps it, and the
+        // inherited descriptor is redirected so a feature process, an
+        // in-process engine, or any future spawn cannot write into the
+        // JSON-RPC messages the client parses.
+        AgentOutput.silenceInheritedStandardOutput()
         let writer = ACPWriter()
         let bridge = ZenCODEACPBridge(
             configuration: configuration,

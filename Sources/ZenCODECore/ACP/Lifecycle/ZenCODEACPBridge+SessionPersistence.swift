@@ -9,6 +9,12 @@ import Foundation
 import ToolCore
 import ZenCODERuntime
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// The saved session an ACP session is saved as, remembered by the live
 /// incarnation (``ZenCODEACPBridge/SessionState/savedSessionLink``) so that
 /// every save after the first one writes the same file without reading it
@@ -120,9 +126,14 @@ extension ZenCODEACPBridge {
     /// the project it was saved in; `nil` when the incarnation is no longer
     /// live or the write failed (logged). The first save names the session
     /// (``newSavedSessionLink(sessionID:workingDirectory:transcript:now:)``)
-    /// and the incarnation remembers the name for the next ones. The prompts
-    /// the live session has a display text for are presented with it in the
-    /// transcript, while `history` stays as the runner holds it.
+    /// and the incarnation remembers the name for the next ones, but the name
+    /// is checked again before every write: a name another session took
+    /// meanwhile (a name that was free and then was not, or a second `zen
+    /// --acp` process) never has its file overwritten. The name check and the
+    /// write happen under one project-wide lock, so two processes cannot pick
+    /// the same name. The prompts the live session has a display text for are
+    /// presented with it in the transcript, while `history` stays as the
+    /// runner holds it.
     private func writeSavedSession(
         sessionID: String,
         epoch: UInt64,
@@ -143,7 +154,38 @@ extension ZenCODEACPBridge {
             }
             return message.replacing(content: displayText)
         }
-        let link = live.savedSessionLink ?? newSavedSessionLink(
+        return withSessionDirectoryLock(for: workingDirectory) {
+            writeLockedSavedSession(
+                live: live,
+                sessionID: sessionID,
+                epoch: epoch,
+                snapshot: snapshot,
+                conversation: conversation,
+                transcript: transcript,
+                taskGraph: taskGraph,
+                configuration: configuration,
+                workingDirectory: workingDirectory,
+                now: now
+            )
+        }
+    }
+
+    /// The body of ``writeSavedSession(sessionID:epoch:snapshot:conversation:taskGraph:)``
+    /// under the project's saved-session lock.
+    private func writeLockedSavedSession(
+        live: SessionState,
+        sessionID: String,
+        epoch: UInt64,
+        snapshot: AgentRuntimeSessionSnapshot,
+        conversation: [AgentRuntimeMessage],
+        transcript: [AgentRuntimeMessage],
+        taskGraph: TaskGraphSnapshot?,
+        configuration: AgentCoreSessionConfiguration,
+        workingDirectory: URL,
+        now: Date
+    ) -> URL? {
+        let link = resolvedSavedSessionLink(
+            live.savedSessionLink,
             sessionID: sessionID,
             workingDirectory: workingDirectory,
             transcript: transcript,
@@ -268,6 +310,99 @@ extension ZenCODEACPBridge {
             createdAt: ownFile(named: name)?.header.createdAt ?? now,
             checkpointTree: nil
         )
+    }
+
+    /// The link a save of `sessionID` writes under: the one the incarnation
+    /// already has while its name is still free for it, else a new one. A name
+    /// another session took meanwhile — the file of that name belongs to a
+    /// different session, or cannot be read as a session — is never
+    /// overwritten: the session saves under the next free name instead.
+    private func resolvedSavedSessionLink(
+        _ link: ACPSavedSessionLink?,
+        sessionID: String,
+        workingDirectory: URL,
+        transcript: [AgentRuntimeMessage],
+        now: Date
+    ) -> ACPSavedSessionLink {
+        guard let link,
+              savedSessionNameIsFree(link.name, for: sessionID, workingDirectory: workingDirectory) else {
+            var fresh = newSavedSessionLink(
+                sessionID: sessionID,
+                workingDirectory: workingDirectory,
+                transcript: transcript,
+                now: now
+            )
+            // A tree the incarnation already built describes a conversation
+            // another file holds; it is not carried over to the new name.
+            fresh = ACPSavedSessionLink(
+                name: fresh.name,
+                createdAt: fresh.createdAt,
+                checkpointTree: nil
+            )
+            return fresh
+        }
+        return link
+    }
+
+    /// Whether `name` can be written by the session `sessionID` in the project
+    /// of `workingDirectory`: the file does not exist, or it is that session's.
+    /// A file that exists but cannot be read as a saved session of the current
+    /// version is not free either: overwriting it would lose a session whose
+    /// owner cannot be established.
+    private func savedSessionNameIsFree(
+        _ name: String,
+        for sessionID: String,
+        workingDirectory: URL
+    ) -> Bool {
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(for: workingDirectory)
+        let fileURL = directoryURL
+            .appendingPathComponent(TerminalSessionStore.filename(for: name))
+            .standardizedFileURL
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return true
+        }
+        return TerminalSessionStore.savedSessionFiles(in: directoryURL).first {
+            $0.url.standardizedFileURL == fileURL
+        }?.header.sessionID == sessionID
+    }
+
+    /// Runs `body` while holding the project's saved-session lock, which the
+    /// processes that save into the same project share: the name check and the
+    /// write of one save are one step for all of them, so two `zen --acp`
+    /// processes (or two channels of one process) cannot choose the same free
+    /// name and overwrite each other. A lock that cannot be taken (an
+    /// unsupported filesystem, a read-only directory) does not stop a save: the
+    /// check before the write still holds within the process.
+    private func withSessionDirectoryLock<Value>(
+        for workingDirectory: URL,
+        _ body: () throws -> Value
+    ) rethrows -> Value {
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(for: workingDirectory)
+        let lockURL = directoryURL.appendingPathComponent(".acp-save.lock")
+        try? FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR, 0o600)
+        guard descriptor >= 0 else {
+            return try body()
+        }
+        defer { Self.closeFileDescriptor(descriptor) }
+        guard flock(descriptor, LOCK_EX) == 0 else {
+            return try body()
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
+        return try body()
+    }
+
+    /// Closes a descriptor opened for the save lock. The qualified call avoids
+    /// the instance `close` the bridge inherits.
+    private static func closeFileDescriptor(_ descriptor: Int32) {
+        #if canImport(Darwin)
+        _ = Darwin.close(descriptor)
+        #elseif canImport(Glibc)
+        _ = Glibc.close(descriptor)
+        #endif
     }
 
     /// `session/delete` of `sessionID`: deletes, in every project, the saved

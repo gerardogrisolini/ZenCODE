@@ -6,8 +6,34 @@
 //
 
 import Foundation
+import Synchronization
 import ToolCore
 import ZenCODERuntime
+
+/// The tool calls a presenter already wrote to the client, by id.
+///
+/// ACP relates a `tool_call_update` to the `tool_call` of the same id, so a
+/// completion for a call whose creation never reached the client (a call
+/// cancelled before it was shown, one of a sub-agent) writes the creation
+/// first. Only presentation state: nothing of it is persisted.
+struct ACPPresentedToolCalls: Sendable {
+    private final class Storage: Sendable {
+        let ids = Mutex<Set<String>>(Set())
+    }
+
+    private let storage = Storage()
+
+    /// Registers `id` and tells whether the client had not received its
+    /// `tool_call` yet.
+    func markPresented(_ id: String) -> Bool {
+        storage.ids.withLock { $0.insert(id).inserted }
+    }
+
+    /// `true` while the client received the `tool_call` of `id`.
+    func contains(_ id: String) -> Bool {
+        storage.ids.withLock { $0.contains(id) }
+    }
+}
 
 /// Presents one ACP prompt turn as `session/update` notifications.
 ///
@@ -28,6 +54,8 @@ struct ACPPromptPresenter: ChatSessionPresenter {
     /// id and phase) for this prompt: `true` once per prompt, and only while
     /// the prompt holds its incarnation and presents its updates.
     let claimDelegatedToolNotification: @Sendable (String) async -> Bool
+    /// The tool calls this turn already showed, by id.
+    private let presentedToolCalls = ACPPresentedToolCalls()
 
     private func send(_ update: JSONValue) async {
         if let updatePipeline {
@@ -79,17 +107,28 @@ struct ACPPromptPresenter: ChatSessionPresenter {
 
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         await ensureTasklessObserver()
+        _ = presentedToolCalls.markPresented(toolCall.id)
         await send(ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall, workingDirectory: workspaceURL))
     }
 
     /// The call's completion `tool_call_update`, its title ending with the
     /// time the tool executor measured (``DirectAgentToolResult/elapsed``);
     /// a result without it (a call cancelled before it was dispatched) gives
-    /// a title without time.
+    /// a title without time. A completion of a call the client never saw — the
+    /// turn was cancelled before its creation was written — is preceded by the
+    /// `tool_call` it refers to.
     func presentToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
+        if presentedToolCalls.markPresented(toolCall.id) {
+            await send(
+                ZenCODEACPBridge.toolCallCreateJSONUpdate(
+                    for: toolCall,
+                    workingDirectory: workspaceURL
+                )
+            )
+        }
         await send(
             ZenCODEACPBridge.toolCallCompletionJSONUpdate(
                 for: toolCall,
@@ -130,6 +169,21 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         }
         update["toolCallId"] = id
         update["title"] = "\(event.agentName) — \(update["title"] as? String ?? "")"
+        if case .started = event.lifecycle {
+            // The payload is the creation itself.
+            _ = presentedToolCalls.markPresented(id)
+        } else if presentedToolCalls.markPresented(id) {
+            // The client has not seen this call start (the turn was cancelled
+            // before it was shown): the creation goes first, so the update it
+            // is about to receive refers to a call it knows.
+            var creation = ZenCODEACPBridge.toolCallCreateUpdate(
+                for: event.toolCall,
+                workingDirectory: workspaceURL
+            )
+            creation["toolCallId"] = id
+            creation["title"] = "\(event.agentName) — \(creation["title"] as? String ?? "")"
+            await send(JSONValue.acpValue(from: creation))
+        }
         await send(JSONValue.acpValue(from: update))
     }
 

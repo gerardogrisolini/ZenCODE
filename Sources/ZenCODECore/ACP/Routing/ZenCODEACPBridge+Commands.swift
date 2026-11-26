@@ -86,18 +86,30 @@ extension ZenCODEACPBridge {
         command: CoordinatorCommand?,
         routedPromptText: String,
         isWorkspaceCommand: Bool,
+        agentMention: AgentProfile?,
         hasAgentMention: Bool,
         sessionID: String,
         epoch: UInt64,
         promptID: UUID
     ) async throws -> ACPCommandTurnRoute {
-        guard let session = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+        // The fence is the controller's turn token, and it is taken in the same
+        // synchronous step that checks the bridge's own liveness, before the
+        // hop to the host: a `session/cancel` that lands after that hop must
+        // invalidate a command that has not run yet. The host reservation is
+        // what proves the turn still owns the session after the hop, and every
+        // write the commands make goes through the fence.
+        guard let controller = liveSession(id: sessionID, epoch: epoch)?.controller else {
             throw CancellationError()
         }
-        let controller = session.controller
         let fence = controller.beginCommandFence(sessionID: sessionID)
         defer { controller.endCommandFence(fence) }
-        let policy = acpPlanningPolicy(for: session)
+        guard var session = await reservedPromptSession(
+            sessionID: sessionID,
+            epoch: epoch,
+            promptID: promptID
+        ) else {
+            throw CancellationError()
+        }
 
         // While Telegram drives the slot the editor runs only what takes it
         // back (see `ChatSessionHost.admitLine`); every other line is
@@ -105,6 +117,25 @@ extension ZenCODEACPBridge {
         if case let .refused(text) = await host.admitLine(routedPromptText, in: session.slotID) {
             return .immediate(Self.acpImmediateText(text))
         }
+
+        // Only now that the slot admitted the line: a refused line must not
+        // route the session to another agent. The mention keeps the same
+        // incarnation and reservation; it updates the configuration, it does
+        // not restart the session.
+        if let agentMention {
+            guard controller.isCurrent(fence),
+                  let mentionedSession = applyACPAgentMention(
+                      agentMention,
+                      sessionID: sessionID,
+                      epoch: epoch
+                  ) else {
+                throw CancellationError()
+            }
+            session = mentionedSession
+        }
+        // After the mention: the policy saves the plan as the agent the turn
+        // runs on.
+        let policy = acpPlanningPolicy(for: session)
 
         // `/telegram` is not a coordinator command: it is answered here, at
         // once, and never reaches the model (see `routeACPTelegramCommand`).

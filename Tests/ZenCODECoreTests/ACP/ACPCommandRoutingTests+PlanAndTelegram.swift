@@ -457,6 +457,44 @@ extension ACPCommandRoutingTests {
         }
     }
 
+    /// A line the editor sends while Telegram drives the slot is refused and
+    /// changes nothing, its leading `@Agent` mention included: the session is
+    /// not routed to that agent, with its other tools and its own model.
+    @Test(.timeLimit(.minutes(1)))
+    func aRefusedEditorLineDoesNotRouteTheSessionThroughItsAgentMention() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let transport = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            let sessionID = "acp-telegram-mention-\(UUID().uuidString)"
+            let profiles = AgentProfileStore.defaultProfiles()
+            let developer = try #require(profiles.first { $0.id == AgentProfileRole.developer.rawValue })
+            let planner = try #require(profiles.first { $0.id == AgentProfileRole.planner.rawValue })
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: [sessionID],
+                selectedAgent: developer,
+                transport: transport
+            )
+            let bridge = fixture.bridge
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+                == "Telegram remote control is active.\nLinked chat: Test")
+            #expect(await ACPTelegramTestSupport.waitUntil { await transport.pollCount > 0 })
+
+            let agentBefore = await bridge.selectedAgentIDForTesting(sessionID: sessionID)
+            await fixture.prompt("@\(planner.name) inspect this", id: 2, sessionID: sessionID)
+
+            #expect(fixture.wire.stopReason(id: 2) == "end_turn")
+            #expect(
+                fixture.wire.updateTexts(kind: "agent_message_chunk")
+                    == ["ZenCODE: this session is driven from Telegram. Use /telegram off to take it back."]
+            )
+            #expect(agentBefore == developer.id)
+            #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == agentBefore)
+            #expect(await fixture.backend.prompts.isEmpty)
+            await bridge.shutdown()
+        }
+    }
+
     /// Runs `body` in a fresh UUID support directory of its own, holding a
     /// complete routing-v2 Telegram `settings.json` when `telegramConfigured`.
     /// Every test case gets its own directory, so a configured case can never
@@ -501,7 +539,11 @@ extension ZenCODEACPBridge {
 
     /// Routes `prompt` the way `session/prompt` does once it holds the
     /// reservation, and returns the route instead of running the turn.
-    fileprivate func commandRouteForTesting(sessionID: String, prompt: String) async throws -> ACPCommandTurnRoute {
+    fileprivate func commandRouteForTesting(
+        sessionID: String,
+        prompt: String,
+        agentMention: AgentProfile? = nil
+    ) async throws -> ACPCommandTurnRoute {
         guard let session = sessions[sessionID] else { throw CancellationError() }
         let reservation = try await host.reservePrompt(in: session.slotID)
         let route: ACPCommandTurnRoute
@@ -510,7 +552,8 @@ extension ZenCODEACPBridge {
                 command: CoordinatorCommandParser.parse(prompt),
                 routedPromptText: prompt,
                 isWorkspaceCommand: Self.isWorkspaceCommand(prompt),
-                hasAgentMention: false,
+                agentMention: agentMention,
+                hasAgentMention: agentMention != nil,
                 sessionID: sessionID,
                 epoch: reservation.epoch,
                 promptID: reservation.promptID

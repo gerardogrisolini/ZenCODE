@@ -2036,6 +2036,21 @@ may be asked through `session/request_permission` whether to resume the task
 graphs that earlier sessions left incomplete (see [Recovering Incomplete Tasks at
 Startup](#recovering-incomplete-tasks-at-startup)).
 
+A request the agent still owes an answer to when a `session/close` ends the
+session it acts on — `_zencode/session/set_model`, `session/set_config_option`,
+and the `session/load` of a session the process still holds — is answered with
+the JSON-RPC error `-32602` and `The session was closed or replaced before this
+request completed.` A `session/prompt` ends as `cancelled` instead, and after
+`shutdown()` nothing more is written, because the transport is closing.
+
+A `session/load` or `session/resume` of a session id the process does not hold
+claims the id before it suspends. A second request for the same id while the
+first is still opening it answers `-32602` and `Session <id> is already being
+loaded or resumed. Retry after that request completes.`, and opens nothing: a
+client that sends its requests one after the other never sees it. A
+`session/close` or a `session/delete` of an id invalidates the restore that is
+opening it, which answers `-32602` and releases its slot and MCP servers.
+
 ### Session History
 
 ZenCODE keeps the conversation of every ACP session as a saved session of its
@@ -2116,7 +2131,12 @@ agent.
   A saved session you saved with `/sessions` under the same id stays.
   Deleting the session from `/sessions` works too, but a session the agent
   still runs is saved again by its next turn. `session/close` deletes
-  nothing. After a deletion, `session/load` of the id opens an empty session.
+  nothing. After a deletion, `session/load` of the id restores the copy you
+  saved with `/sessions` under that id in the project of `cwd`, if there is
+  one: the most recently saved one of that id, when ACP has none left. The
+  next turn of that session saves it again as an ACP session, so
+  `session/list` lists it again and `session/delete` deletes it. Without a
+  copy, `session/load` opens an empty session.
 
 ### Authentication Methods
 

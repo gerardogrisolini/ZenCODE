@@ -28,6 +28,9 @@ private struct ACPPreparedPrompt {
     let visiblePromptText: String
     let coordinatorCommand: CoordinatorCommand?
     let isWorkspaceCommand: Bool
+    /// The agent the prompt's leading mention routes the session to, applied
+    /// only once the slot admits the line (see ``routeACPCommandTurn``).
+    let agentMention: AgentProfile?
     let hasAgentMention: Bool
     /// The context the client sent around a command or an agent mention typed
     /// in its own block, which a turn that generates passes to the model before
@@ -161,9 +164,6 @@ extension ZenCODEACPBridge {
             throw error
         }
         await releaseReservation()
-        // The graph the turn changed is published once more with the session
-        // back to its own observer; a turn that changed nothing sends nothing.
-        await publishTaskGraphPlan(sessionID: sessionID, epoch: epoch)
     }
 
     private func sendStopReason(id: JSONValue?, _ reason: String) async {
@@ -191,11 +191,19 @@ extension ZenCODEACPBridge {
     ) async throws {
         let turn = ACPPromptTurn(requestID: id, sessionID: sessionID, epoch: epoch, promptID: promptID)
         func finish(stopReason: String) async {
+            // Whatever the turn changed of the session's graph reaches the
+            // client before its reply: an update the client receives after the
+            // stop reason, or after a `cancelled` one, is one ACP expects the
+            // agent to have sent before answering.
+            await publishTaskGraphPlan(sessionID: turn.sessionID, epoch: turn.epoch)
             await sendStopReason(id: turn.requestID, stopReason)
             await releaseReservation()
         }
 
-        let prepared = try await preparePromptTurn(turn, params: params, session: session)
+        let prepared = try await preparePromptTurn(
+            params: params,
+            session: session
+        )
         switch try await routePromptTurn(turn, prepared) {
         case let .finished(stopReason):
             await finish(stopReason: stopReason)
@@ -218,21 +226,22 @@ extension ZenCODEACPBridge {
     }
 
     /// Parses the turn's request: its content blocks and attachments, the
-    /// agent mention it may start with, and the command it carries.
+    /// agent mention it may start with, and the command it carries. The
+    /// mention is only resolved here: the session is routed to its agent once
+    /// the slot admits the line (see ``routeACPCommandTurn``).
     private func preparePromptTurn(
-        _ turn: ACPPromptTurn,
         params: [String: Any],
-        session initialSession: SessionState
+        session: SessionState
     ) async throws -> ACPPreparedPrompt {
-        var session = initialSession
         let promptBlocks = promptBlocks(from: params)
         let rawPromptText = PromptContentFormatter.renderPromptText(from: promptBlocks)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = Self.promptAttachments(
+        let attachmentPlan = Self.attachmentPlan(
             from: promptBlocks,
             renderedPromptText: rawPromptText,
             cwd: session.cwd
         )
+        let attachments = await Self.readAttachments(of: attachmentPlan)
         // Only commands, and agent mentions after Xcode's context, use the
         // operator's separate input (see `routedPromptSource(from:)`). Regular
         // turns still echo and send the entire rendered prompt to the model.
@@ -246,26 +255,6 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("session/prompt requires prompt text or attachments.")
         }
 
-        if let agentMentionResolution {
-            let promptConfiguration = await acpSessionConfiguration(
-                applying: agentMentionResolution.agent,
-                to: session.configuration
-            )
-            // Keep the same incarnation and reservation: routing to another
-            // agent updates the configuration, it does not restart the session.
-            let isLive = updateLiveSession(id: turn.sessionID, epoch: turn.epoch) { live in
-                live = sessionState(
-                    configuration: promptConfiguration,
-                    selectedAgent: agentMentionResolution.agent,
-                    inheriting: live
-                )
-            }
-            guard isLive, let mentionedSession = liveSession(id: turn.sessionID, epoch: turn.epoch) else {
-                throw CancellationError()
-            }
-            session = mentionedSession
-        }
-
         let coordinatorCommand = CoordinatorCommandParser.parse(routedPromptText)
         let isWorkspaceCommand = (Self.commandSource(from: promptBlocks)?.text == promptText)
             && Self.isWorkspaceCommand(routedPromptText)
@@ -275,19 +264,26 @@ extension ZenCODEACPBridge {
             && session.controller.commandState.planBrainstorming?.isAwaitingReply == true
         // Commands remain visible exactly as the client sent them (including an
         // optional leading agent mention); only their hidden operational prompt
-        // is substituted before generation.
+        // is substituted before generation. A prompt that carries Xcode's
+        // context is presented as the operator typed it: the context is what
+        // the model reads, not what the client's echo and title show.
         let visibleSource = coordinatorCommand != nil || isPlanningReply
             ? promptText
             : routedPromptText
-        let visiblePromptText = visibleSource.isEmpty
+        let displayedSource = Self.promptDisplayText(
+            of: visibleSource,
+            removingXcodeContext: xcodeContextBlocks
+        ) ?? visibleSource
+        let visiblePromptText = displayedSource.isEmpty
             ? "Analyze the attached media."
-            : visibleSource
+            : displayedSource
         return ACPPreparedPrompt(
             attachments: attachments,
             routedPromptText: routedPromptText,
             visiblePromptText: visiblePromptText,
             coordinatorCommand: coordinatorCommand,
             isWorkspaceCommand: isWorkspaceCommand,
+            agentMention: agentMentionResolution?.agent,
             hasAgentMention: agentMentionResolution != nil,
             editorContext: editorContext,
             xcodeContextBlocks: xcodeContextBlocks
@@ -309,6 +305,7 @@ extension ZenCODEACPBridge {
                 command: prepared.coordinatorCommand,
                 routedPromptText: prepared.routedPromptText,
                 isWorkspaceCommand: prepared.isWorkspaceCommand,
+                agentMention: prepared.agentMention,
                 hasAgentMention: prepared.hasAgentMention,
                 sessionID: turn.sessionID,
                 epoch: turn.epoch,
@@ -498,7 +495,12 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("session/delete requires params.sessionId.")
         }
         // The entry is dropped before the files: no save of this incarnation
-        // can write its file again once they are gone.
+        // can write its file again once they are gone. A restore of this id
+        // that is still opening is fenced too, before the files go: it answers
+        // the error of a closed session and does not write the deleted
+        // conversation back. It keeps the id claimed until it unwinds, so no
+        // second restore starts meanwhile.
+        invalidateSessionRestore(sessionID)
         if sessions[sessionID] != nil {
             await closeACPSession(sessionID: sessionID)
         }
@@ -521,6 +523,10 @@ extension ZenCODEACPBridge {
     /// lifecycle operations are cancelled and drained, its MCP servers
     /// released, and its slot closed with its runner session.
     func closeACPSession(sessionID: String) async {
+        // A restore of this id that is still opening is fenced too, and before
+        // any suspension: it answers the error of a closed session instead of
+        // publishing an incarnation whose slot this close never saw.
+        invalidateSessionRestore(sessionID)
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
         // In the same step the host retires the incarnation: its controller is

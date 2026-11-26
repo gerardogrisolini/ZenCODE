@@ -12,6 +12,55 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- ACP: a `session/load` or `session/resume` of a session id the process does not
+  hold claims the id before it suspends. A second request for the same id while
+  the first is still opening it answers `-32602` instead of opening a second
+  incarnation, whose host slot, MCP servers, and task-graph observer the last
+  one to publish left orphaned. A `session/close` or a `session/delete` of the
+  id invalidates the restore that is opening it, which answers `-32602` and
+  releases its slot and MCP servers.
+- ACP: a `_zencode/session/set_model`, a `session/set_config_option`, and the
+  `session/load` of a session the agent still runs answer the request with the
+  JSON-RPC error `-32602` when a `session/close` invalidates them while they are
+  suspended, instead of never answering it. After `shutdown()` nothing is
+  written, as before: only the close of a session is an error the client can
+  see.
+- ACP: a prompt that starts with an `@Agent` mention keeps the tool grant the
+  session was created with — the tools of the MCP servers the client provided
+  and its own `allowedTools` restriction — and only narrows it by the mentioned
+  agent's policy. Before, the mention recomposed the grant from the agent's
+  profile alone, which dropped the client's servers and could widen the
+  request's restriction. The mention now also changes the session only once
+  the slot admits the line: a line Telegram refuses no longer routes the
+  session to another agent.
+- ACP: the model reaching the session's tool-round limit ends the turn with the
+  `max_turn_requests` stop reason instead of a `-32603` error response.
+- ACP: a client that acknowledges `fs/write_text_file` with a response object
+  carrying `_meta`, as ACP v1 allows, no longer makes a successful write look
+  failed. The write keeps its diff.
+- ACP: a client that closes the transport no longer kills the process with
+  `SIGPIPE` or a `FileHandle` exception: `SIGPIPE` is suppressed before the
+  bridge starts and an `EPIPE` write is dropped, so the session reaches the
+  normal shutdown. `StdioLineReader` also resumes the search for a newline
+  where it stopped, so a large line (a base64 image in a prompt) is scanned
+  once instead of from its start after every 4 KB read.
+- ACP: `session/cancel` that lands before a `/goal`, `/plan`, or `/review`
+  command takes its turn fence now stops the command from writing its state,
+  as a cancel landing after it already did.
+- ACP: a reconfiguration whose rollback runs after `session/close` no longer
+  re-creates the closed session in the runner.
+- ACP: the Summary of the files a turn changed presents each path as a code
+  span, so a name holding `*`, `_`, or `[` no longer changes how the client
+  renders the section.
+- ACP: the attachments of a prompt are the media the request declares: a
+  `resource` carrying a document is no longer forwarded to the provider as an
+  image. An attachment file is read outside the session actor, no larger than
+  20 MB, and only from the session workspace or a system temporary directory.
+- ACP: a turn's final `plan` and every other update it owes reach the client
+  before its `stopReason` reply; nothing of the session follows the reply.
+- ACP: a tool call whose creation never reached the client — one cancelled
+  before it was shown, or a sub-agent's — is created before the update that
+  completes it.
 - macOS app: the Sub-Agents card no longer shows a sub-agent as running
   after it ended. The window publishes the overview again when a turn
   finishes, as the terminal and Telegram do, and keeps refreshing it while it

@@ -45,6 +45,7 @@ final class ACPClientFileSystem: Sendable {
         let write: ClientTextFileSystem.Write = { path, contents in
             try await self.fileLeases.withLease(sessionID: path.standardizedFileURL.path) {
                 var before: String?
+                var fileIsNew = false
                 if self.canRead {
                     do {
                         before = try await self.read(path, sessionID: sessionID, isValid: isValid)
@@ -52,13 +53,17 @@ final class ACPClientFileSystem: Sendable {
                         throw CancellationError()
                     } catch let error as ACPFileSystemTimeout {
                         throw error
+                    } catch let error as ACPClientError where error.isResourceNotFound {
+                        // ACP does not standardize a missing-file error code, but
+                        // the client's `-32002` says the path is not there: the
+                        // write creates it, and the diff is the whole content.
+                        fileIsNew = true
                     } catch {
-                        // ACP does not standardize a missing-file error code.
                         // A failed read is unknown, never evidence of absence.
                     }
                 }
                 try await self.commit(
-                    contents, before: before, path: path,
+                    contents, before: before, fileIsNew: fileIsNew, path: path,
                     sessionID: sessionID, isValid: isValid)
             }
         }
@@ -93,7 +98,7 @@ final class ACPClientFileSystem: Sendable {
     }
 
     private func commit(
-        _ contents: String, before: String?, path: URL, sessionID: String,
+        _ contents: String, before: String?, fileIsNew: Bool = false, path: URL, sessionID: String,
         isValid: @escaping @Sendable () async -> Bool
     ) async throws {
         if let before {
@@ -106,7 +111,11 @@ final class ACPClientFileSystem: Sendable {
         let result = try await request(
             "fs/write_text_file", path: path, contents: contents,
             sessionID: sessionID, isValid: isValid)
-        guard result == .null || result == .object([:]) else {
+        // ACP v1 acknowledges a write with `null` or with a `WriteTextFileResponse`
+        // object, which may carry `_meta`: any object acknowledges the write.
+        // Rejecting the object would report a successful write as failed and
+        // invite a blind retry.
+        guard result == .null || result?.objectValue != nil else {
             throw ACPError.internalError(
                 "ACP client returned an invalid write acknowledgment; the file may have changed.")
         }
@@ -122,6 +131,14 @@ final class ACPClientFileSystem: Sendable {
             }
         }
         guard let recorder = OperationFileChangeRecorder.current else { return }
+        // A file the client did not have is new: the diff is the content the
+        // write created, not an unknown previous text.
+        if fileIsNew, verified, !contents.contains("\0") {
+            recorder.record(
+                .init(path: path.path, oldText: "", newText: contents)
+            )
+            return
+        }
         guard let before, verified,
             !before.contains("\0"), !contents.contains("\0")
         else {

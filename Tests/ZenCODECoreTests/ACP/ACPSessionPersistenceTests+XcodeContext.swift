@@ -44,6 +44,157 @@ extension ACPSessionPersistenceTests {
         ]
     }
 
+    /// The client's echo and the session title show what the operator typed,
+    /// never the context Xcode sent with it: the context reaches the model, not
+    /// the conversation the editor displays.
+    @Test
+    func theEchoAndTitleOfATurnShowOnlyTheOperatorsText() async throws {
+        try await Self.withSupportDirectory { _, workspace in
+            let wire = ACPPersistenceWire()
+            let backend = ACPPersistenceBackend()
+            let bridge = try Self.makeBridge(wire: wire, backend: backend, workspace: workspace)
+            await bridge.handleMessage(Self.newSessionRequest(id: 1, workspace: workspace))
+            let sessionID = try #require(wire.sessionID(ofResponse: 1))
+            await bridge.handleMessage(Self.promptRequest(
+                id: 2,
+                sessionID: sessionID,
+                blocks: Self.xcodeBlocks(operatorText: "Domanda vera")
+            ))
+            #expect(wire.stopReason(id: 2) == "end_turn")
+
+            let echoes = wire.chunks(before: wire.count)
+                .filter { $0.kind == "user_message_chunk" }
+                .map(\.text)
+            #expect(echoes == ["Domanda vera"])
+            let titles = wire.titles(sessionID: sessionID)
+            #expect(titles.last == "Domanda vera")
+            #expect(titles.allSatisfy { !$0.contains("<system-reminder>") && !$0.contains("Project structure") })
+            // The model still gets the whole prompt.
+            let prompt = try #require(await backend.observations.last?.prompt)
+            #expect(prompt.hasPrefix("<system-reminder>"))
+            await bridge.shutdown()
+        }
+    }
+
+    /// A restored session replays the operator's prompts, not the context each
+    /// of them carried.
+    @Test
+    func theReplayOfARestoredSessionPresentsTheOperatorsPromptsOnly() async throws {
+        try await Self.withSupportDirectory { _, workspace in
+            let firstWire = ACPPersistenceWire()
+            let first = try Self.makeBridge(
+                wire: firstWire,
+                backend: ACPPersistenceBackend(),
+                workspace: workspace
+            )
+            await first.handleMessage(Self.newSessionRequest(id: 1, workspace: workspace))
+            let sessionID = try #require(firstWire.sessionID(ofResponse: 1))
+            await first.handleMessage(Self.promptRequest(
+                id: 2,
+                sessionID: sessionID,
+                blocks: Self.xcodeBlocks(operatorText: "Domanda vera")
+            ))
+            #expect(firstWire.stopReason(id: 2) == "end_turn")
+            await first.shutdown()
+
+            let secondWire = ACPPersistenceWire()
+            let second = try Self.makeBridge(
+                wire: secondWire,
+                backend: ACPPersistenceBackend(),
+                workspace: workspace
+            )
+            await second.handleMessage([
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/load",
+                "params": ["sessionId": sessionID, "cwd": workspace.path] as [String: Any],
+            ])
+            let replayed = secondWire.chunks(before: secondWire.count)
+                .filter { $0.kind == "user_message_chunk" }
+                .map(\.text)
+            #expect(replayed == ["Domanda vera"])
+            await second.shutdown()
+        }
+    }
+
+    /// A name the session still holds is reused; a name another session's file
+    /// took meanwhile is never overwritten. The session saves under the next
+    /// free name and keeps presenting its earlier turns.
+    @Test
+    func aSavedNameAnotherSessionTookIsNeverOverwritten() async throws {
+        try await Self.withSupportDirectory { _, workspace in
+            let wire = ACPPersistenceWire()
+            let bridge = try Self.makeBridge(
+                wire: wire,
+                backend: ACPPersistenceBackend(),
+                workspace: workspace
+            )
+            await bridge.handleMessage(Self.newSessionRequest(id: 1, workspace: workspace))
+            let sessionID = try #require(wire.sessionID(ofResponse: 1))
+            await bridge.handleMessage(Self.promptRequest(
+                id: 2,
+                sessionID: sessionID,
+                blocks: [["type": "text", "text": "Domanda vera"]]
+            ))
+            #expect(wire.stopReason(id: 2) == "end_turn")
+            let firstFile = TerminalSessionStore.sessionFileURL(
+                name: "Domanda vera",
+                workingDirectory: workspace
+            )
+            #expect(FileManager.default.fileExists(atPath: firstFile.path))
+
+            // The name becomes free (the file is removed), and another session
+            // of the same project takes it before this one saves again.
+            try FileManager.default.removeItem(at: firstFile)
+            let otherWire = ACPPersistenceWire()
+            let other = try Self.makeBridge(
+                wire: otherWire,
+                backend: ACPPersistenceBackend(),
+                workspace: workspace
+            )
+            await other.handleMessage(Self.newSessionRequest(id: 3, workspace: workspace))
+            let otherSessionID = try #require(otherWire.sessionID(ofResponse: 3))
+            await other.handleMessage(Self.promptRequest(
+                id: 4,
+                sessionID: otherSessionID,
+                blocks: [["type": "text", "text": "Domanda vera"]]
+            ))
+            #expect(otherWire.stopReason(id: 4) == "end_turn")
+            await other.shutdown()
+            let otherFile = TerminalSessionStore.sessionFileURL(
+                name: "Domanda vera",
+                workingDirectory: workspace
+            )
+            #expect(FileManager.default.fileExists(atPath: otherFile.path))
+
+            // This session goes on: it must not write into the other's file.
+            await bridge.handleMessage(Self.promptRequest(
+                id: 5,
+                sessionID: sessionID,
+                blocks: [["type": "text", "text": "Altra domanda"]]
+            ))
+            #expect(wire.stopReason(id: 5) == "end_turn")
+            await bridge.shutdown()
+
+            let names = try TerminalSessionStore.savedSessions(for: workspace).map(\.name).sorted()
+            #expect(names == ["Domanda vera", "Domanda vera (2)"])
+            let otherSession = try #require(
+                try TerminalSessionStore.savedSessions(for: workspace)
+                    .first { $0.name == "Domanda vera" }
+            )
+            #expect(otherSession.sessionID == otherSessionID)
+            #expect(otherSession.history.contains { $0.content.contains("Altra domanda") } == false)
+            let ownSession = try #require(
+                try TerminalSessionStore.savedSessions(for: workspace)
+                    .first { $0.name == "Domanda vera (2)" }
+            )
+            #expect(ownSession.sessionID == sessionID)
+            #expect(ownSession.history.contains { $0.content.contains("Altra domanda") })
+            // The other session's file is the one it wrote.
+            #expect(FileManager.default.fileExists(atPath: otherFile.path))
+        }
+    }
+
     /// The saved session is named after the operator's text and presents it
     /// in its transcript, while its history keeps the whole prompt the model
     /// got; everything else is the same in both.

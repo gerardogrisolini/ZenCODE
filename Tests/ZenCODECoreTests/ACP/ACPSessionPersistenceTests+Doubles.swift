@@ -67,6 +67,21 @@ final class ACPPersistenceWire: Sendable {
         result(id: id)?["stopReason"]?.acpStringValue
     }
 
+    /// The `title` of every `session_info_update` written for `sessionID`.
+    func titles(sessionID: String) -> [String] {
+        storage.withLock { $0 }.compactMap { message in
+            guard let object = message.objectValue,
+                  object["method"]?.acpStringValue == "session/update",
+                  let params = object["params"]?.objectValue,
+                  params["sessionId"]?.acpStringValue == sessionID,
+                  let update = params["update"]?.objectValue,
+                  update["sessionUpdate"]?.acpStringValue == "session_info_update" else {
+                return nil
+            }
+            return update["title"]?.acpStringValue
+        }
+    }
+
     /// The user and agent message chunks written before message `index`.
     func chunks(before index: Int) -> [Chunk] {
         storage.withLock { Array($0.prefix(index)) }.compactMap { message in

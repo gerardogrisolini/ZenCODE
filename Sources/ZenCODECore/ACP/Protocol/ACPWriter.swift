@@ -9,6 +9,28 @@ import Foundation
 import ToolCore
 import ZenCODERuntime
 
+/// A JSON-RPC error the ACP client answered one of the agent's requests with.
+///
+/// It keeps the code the client sent, so a caller can tell a missing file
+/// (`-32002`) from a denied one: the message alone cannot.
+public struct ACPClientError: LocalizedError, Sendable {
+    /// ACP `Resource not found`: the path does not exist for the client.
+    public static let resourceNotFoundCode = -32002
+
+    public let code: Int
+    public let message: String
+
+    public var errorDescription: String? {
+        message
+    }
+
+    /// `true` when the client said the path does not exist, which is not an
+    /// error of the operation that asked for it.
+    public var isResourceNotFound: Bool {
+        code == Self.resourceNotFoundCode
+    }
+}
+
 public actor ACPWriter {
     /// Sink for encoded JSON-RPC messages. Injectable so tests can observe the
     /// exact bytes the bridge puts on the wire; production still writes to the
@@ -26,8 +48,26 @@ public actor ACPWriter {
 
     public init(sink: Sink? = nil) {
         self.sink = sink ?? { data in
-            AgentOutput.standardOutput.write(data)
-            AgentOutput.standardOutput.write(Data([0x0a]))
+            Self.writeToStandardOutput(data)
+        }
+    }
+
+    /// Writes one encoded message, with its newline, to the preserved standard
+    /// output without trapping the process when the client closed the pipe.
+    ///
+    /// `FileHandle.write(_:)` raises an Objective-C exception on `EPIPE`, which
+    /// aborts the process before any shutdown can run. The throwing
+    /// `write(contentsOf:)` fails with an error instead: the message is dropped
+    /// and the input side reports EOF, which ends the session through the normal
+    /// shutdown path. `SIGPIPE` itself is suppressed by ``AgentRuntimeLauncher``
+    /// before the bridge is built, so the write cannot kill the process either.
+    static func writeToStandardOutput(_ data: Data) {
+        var payload = data
+        payload.append(0x0a)
+        do {
+            try AgentOutput.standardOutput.write(contentsOf: payload)
+        } catch {
+            // The client is gone: nothing can be delivered anymore.
         }
     }
 
@@ -77,7 +117,10 @@ public actor ACPWriter {
 
         if let errorObject = object["error"]?.objectValue {
             let message = errorObject["message"]?.acpStringValue ?? "ACP host request failed."
-            continuation.resume(throwing: ACPError.internalError(message))
+            // The code tells a caller what the host refused: a missing file is
+            // not an empty one, and a denied path is not a missing file.
+            let code = errorObject["code"]?.numberValue.map { Int($0) } ?? -32603
+            continuation.resume(throwing: ACPClientError(code: code, message: message))
             return
         }
 

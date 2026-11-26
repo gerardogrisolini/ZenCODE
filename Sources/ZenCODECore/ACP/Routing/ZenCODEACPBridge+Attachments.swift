@@ -7,7 +7,30 @@ import Foundation
 import ToolCore
 import ZenCODERuntime
 
+/// What a prompt's blocks point at, before anything is read: the attachments
+/// carried inline and the files to read. `Sendable`, so the parsing can happen
+/// on the bridge and the reading elsewhere.
+public struct ACPPromptAttachmentPlan: Sendable {
+    public var attachments: [AgentRuntimeAttachment] = []
+    public var files: [ACPAttachmentFile] = []
+    /// The session's working directory: the only place beside the system
+    /// temporary directories an attachment file may be read from.
+    public var workingDirectory: String = ""
+}
+
+/// A file an ACP prompt points at, with the type the request declares for it.
+public struct ACPAttachmentFile: Sendable {
+    public let url: URL
+    public let contentType: String?
+}
+
 extension ZenCODEACPBridge {
+    /// The most one attachment of a `session/prompt` may carry. A request is
+    /// the client's, so the agent bounds what it reads and forwards: an
+    /// attachment of any size would otherwise be loaded into memory and sent to
+    /// the provider.
+    static let maximumAttachmentBytes = 20 * 1024 * 1024
+
     public func promptBlocks(from params: [String: Any]) -> [Any] {
         if let prompt = params["prompt"] as? [Any] {
             return prompt
@@ -34,33 +57,95 @@ extension ZenCODEACPBridge {
         return []
     }
 
-    public static func promptAttachments(
+    /// The attachments of the prompt's blocks: what the request carries is
+    /// parsed here, synchronously, and the files it points at are listed for the
+    /// caller to read off the bridge's actor (see ``readAttachments(of:)``). A
+    /// prompt block is not `Sendable`, so only the resulting plan is handed to
+    /// the reading step.
+    public static func attachmentPlan(
         from blocks: [Any],
         renderedPromptText _: String,
         cwd: String
-    ) -> [AgentRuntimeAttachment] {
-        var attachments: [AgentRuntimeAttachment] = []
+    ) -> ACPPromptAttachmentPlan {
+        var plan = ACPPromptAttachmentPlan()
+        plan.workingDirectory = cwd
         var seenKeys = Set<String>()
 
-        func append(_ attachment: AgentRuntimeAttachment?) {
-            guard let attachment else {
-                return
-            }
-            let key = attachment.fileURL?.standardizedFileURL.path
+        func key(of attachment: AgentRuntimeAttachment) -> String {
+            attachment.fileURL?.standardizedFileURL.path
                 ?? "\(attachment.originalFilename):\(attachment.data?.count ?? 0)"
-            guard seenKeys.insert(key).inserted else {
+        }
+
+        func append(_ source: ACPAttachmentSource?) {
+            guard let source else {
                 return
             }
-            attachments.append(attachment)
+            switch source {
+            case let .data(data, contentType, originalFilename):
+                guard data.count <= maximumAttachmentBytes,
+                      let kind = attachmentKind(mimeType: contentType, filename: originalFilename) else {
+                    return
+                }
+                let attachment = AgentRuntimeAttachment(
+                    kind: kind,
+                    data: data,
+                    contentType: contentType,
+                    originalFilename: originalFilename
+                        ?? embeddedAttachmentFilename(contentType: contentType)
+                )
+                guard seenKeys.insert(key(of: attachment)).inserted else { return }
+                plan.attachments.append(attachment)
+            case let .file(url, contentType):
+                guard seenKeys.insert(url.standardizedFileURL.path).inserted else { return }
+                plan.files.append(ACPAttachmentFile(url: url, contentType: contentType))
+            }
         }
 
         for block in blocks {
-            append(promptAttachment(from: block, cwd: cwd))
+            append(attachmentSource(from: block, cwd: cwd))
+        }
+        return plan
+    }
+
+    /// The attachments `plan` describes: the inline ones, then every file it
+    /// names, read off the actor and bounded.
+    public static func readAttachments(of plan: ACPPromptAttachmentPlan) async -> [AgentRuntimeAttachment] {
+        var attachments = plan.attachments
+        for file in plan.files {
+            guard let attachment = await loadAttachmentFile(
+                file.url,
+                contentType: file.contentType,
+                cwd: plan.workingDirectory
+            ) else {
+                continue
+            }
+            attachments.append(attachment)
         }
         return attachments
     }
 
-    private static func promptAttachment(from block: Any, cwd: String) -> AgentRuntimeAttachment? {
+    /// The attachments of a prompt, parsed and read in one step: the entry
+    /// point of a caller that already holds the blocks on its own actor.
+    public static func promptAttachments(
+        from blocks: [Any],
+        renderedPromptText: String,
+        cwd: String
+    ) async -> [AgentRuntimeAttachment] {
+        await readAttachments(of: attachmentPlan(
+            from: blocks,
+            renderedPromptText: renderedPromptText,
+            cwd: cwd
+        ))
+    }
+
+    private enum ACPAttachmentSource {
+        /// Bytes the request carried inline.
+        case data(Data, contentType: String?, originalFilename: String?)
+        /// A file the request points at.
+        case file(URL, contentType: String?)
+    }
+
+    private static func attachmentSource(from block: Any, cwd: String) -> ACPAttachmentSource? {
         guard let object = block as? [String: Any] else {
             return nil
         }
@@ -68,50 +153,45 @@ extension ZenCODEACPBridge {
 
         switch type {
         case "image", "input_image":
-            return imageAttachment(from: object, cwd: cwd)
+            return mediaSource(from: object, cwd: cwd)
         case "image_url":
-            return imageURLAttachment(from: object["image_url"], cwd: cwd)
+            return urlSource(from: object["image_url"], cwd: cwd)
         case "resource":
             guard let resource = object["resource"] as? [String: Any] else {
                 return nil
             }
-            return imageAttachment(from: resource, cwd: cwd)
+            return mediaSource(from: resource, cwd: cwd)
         default:
             if let imageURL = object["image_url"] {
-                return imageURLAttachment(from: imageURL, cwd: cwd)
+                return urlSource(from: imageURL, cwd: cwd)
             }
             return nil
         }
     }
 
-    private static func imageAttachment(from object: [String: Any], cwd: String) -> AgentRuntimeAttachment? {
+    /// The attachment a media block names: the bytes it embeds, else the file
+    /// it points at (a `data:` URL among them).
+    private static func mediaSource(from object: [String: Any], cwd: String) -> ACPAttachmentSource? {
         let contentType = firstString(
             in: object,
             keys: ["mimeType", "mime_type", "mediaType", "media_type", "contentType", "content_type"]
         )
         let originalFilename = firstString(in: object, keys: ["filename", "fileName", "name", "title"])
         if let data = firstBase64Data(in: object) {
-            return AgentRuntimeAttachment(
-                kind: .image,
-                data: data,
-                contentType: contentType,
-                originalFilename: originalFilename
-                    ?? embeddedAttachmentFilename(contentType: contentType)
-            )
+            return .data(data, contentType: contentType, originalFilename: originalFilename)
         }
 
-        if let uri = firstString(in: object, keys: ["uri", "url", "path", "image_url"]),
-           let attachment = imageURLAttachment(from: uri, cwd: cwd, contentType: contentType) {
-            return attachment
+        if let uri = firstString(in: object, keys: ["uri", "url", "path", "image_url"]) {
+            return urlSource(from: uri, cwd: cwd, contentType: contentType)
         }
         return nil
     }
 
-    private static func imageURLAttachment(
+    private static func urlSource(
         from value: Any?,
         cwd: String,
         contentType: String? = nil
-    ) -> AgentRuntimeAttachment? {
+    ) -> ACPAttachmentSource? {
         let rawURL: String?
         if let string = value as? String {
             rawURL = string
@@ -125,17 +205,101 @@ extension ZenCODEACPBridge {
             return nil
         }
         if let (mimeType, data) = imageDataURL(rawURL) {
-            return AgentRuntimeAttachment(
-                kind: .image,
-                data: data,
-                contentType: contentType ?? mimeType,
-                originalFilename: embeddedAttachmentFilename(contentType: contentType ?? mimeType)
-            )
+            return .data(data, contentType: contentType ?? mimeType, originalFilename: nil)
         }
         guard let fileURL = fileURL(from: rawURL, cwd: cwd) else {
             return nil
         }
-        return try? AgentRuntimeAttachmentStore.importFile(from: fileURL).runtimeAttachment
+        return .file(fileURL, contentType: contentType)
+    }
+
+    /// Reads the attachment `url` names, off the bridge's actor.
+    ///
+    /// The file must be one the session may read (see
+    /// ``isReadableAttachmentLocation(_:cwd:)``), no larger than
+    /// ``maximumAttachmentBytes``, and of a media kind the request declares or
+    /// its name tells: a `resource` carrying a document is not an image, and is
+    /// not forwarded to the provider as one. The read is detached, so a large
+    /// file or a slow disk never blocks the turn, a `session/cancel`, or the
+    /// bridge's other requests.
+    private static func loadAttachmentFile(
+        _ url: URL,
+        contentType: String?,
+        cwd: String
+    ) async -> AgentRuntimeAttachment? {
+        guard isReadableAttachmentLocation(url, cwd: cwd) else {
+            return nil
+        }
+        return await Task.detached(priority: .userInitiated) {
+            let standardizedURL = url.standardizedFileURL
+            let declaredKind = attachmentKind(
+                mimeType: contentType,
+                filename: standardizedURL.lastPathComponent
+            )
+            // A declared type that is not media at all (a PDF, a text file) is
+            // not an attachment: its text, if any, is already in the prompt.
+            if contentType?.nilIfBlank != nil, declaredKind == nil {
+                return nil
+            }
+            guard let attributes = try? FileManager.default.attributesOfItem(
+                atPath: standardizedURL.path
+            ),
+                let size = (attributes[.size] as? NSNumber)?.intValue,
+                size <= maximumAttachmentBytes else {
+                return nil
+            }
+            guard let imported = try? AgentRuntimeAttachmentStore.importFile(from: standardizedURL) else {
+                return nil
+            }
+            let attachment = imported.runtimeAttachment
+            if let declaredKind, declaredKind != attachment.kind {
+                return nil
+            }
+            return attachment
+        }.value
+    }
+
+    /// Whether an attachment path may be read: a file of the session's
+    /// workspace, or of a system temporary directory. A `session/prompt` is the
+    /// client's, and everything it reads is forwarded to the provider, so the
+    /// request does not turn the agent into a reader of the whole disk.
+    static func isReadableAttachmentLocation(_ url: URL, cwd: String) -> Bool {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        let roots = [
+            URL(fileURLWithPath: cwd, isDirectory: true),
+            FileManager.default.temporaryDirectory,
+        ]
+        return roots.contains { root in
+            let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+            let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+            return path == rootPath || path.hasPrefix(prefix)
+        }
+    }
+
+    /// The media kind an attachment declares: the `mimeType` decides when the
+    /// request sends one (and a `mimeType` that is not media means the block is
+    /// no attachment at all), else the name's extension. A block with neither
+    /// stays an image, as it always was.
+    private static func attachmentKind(
+        mimeType: String?,
+        filename: String?
+    ) -> AgentRuntimeAttachment.Kind? {
+        if let mimeType = mimeType?.lowercased().nilIfBlank {
+            if mimeType.hasPrefix("image/") {
+                return .image
+            }
+            if mimeType.hasPrefix("video/") {
+                return .video
+            }
+            return nil
+        }
+        guard let filename = filename?.nilIfBlank else {
+            return .image
+        }
+        guard !(filename as NSString).pathExtension.isEmpty else {
+            return .image
+        }
+        return (try? AgentRuntimeAttachmentStore.attachmentKind(for: URL(fileURLWithPath: filename)))
     }
 
     private static func firstBase64Data(in object: [String: Any]) -> Data? {
@@ -203,6 +367,6 @@ extension ZenCODEACPBridge {
             originalFilename: "",
             contentType: contentType
         )
-        return fileExtension.isEmpty ? "image" : "image.\(fileExtension)"
+        return fileExtension.isEmpty ? "attachment" : "attachment.\(fileExtension)"
     }
 }

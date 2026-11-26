@@ -280,4 +280,110 @@ struct ACPDelegatedToolPresentationTests {
         #expect(Self.delegatedUpdates(output) == [Self.expectedUpdate(started, cwd: cwd)])
         await bridge.shutdown()
     }
+
+    /// A completion of a call whose `tool_call` never reached the client — the
+    /// turn was cancelled before it was shown — writes the creation first: an
+    /// update the client cannot relate to a call is one it cannot render.
+    @Test
+    func aCompletionOfAToolCallTheClientNeverSawWritesItsCreationFirst() async {
+        let output = WireLog()
+        let presenter = ACPPromptPresenter(
+            sessionID: "late-tool-session",
+            workspaceURL: URL(fileURLWithPath: "/tmp/workspace", isDirectory: true),
+            writer: ACPWriter(sink: { data in
+                if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                    output.messages.withLock { $0.append(value) }
+                }
+            }),
+            updatePipeline: nil,
+            ensureTasklessObserver: {},
+            claimDelegatedToolNotification: { _ in true }
+        )
+        let call = DirectAgentToolCall(
+            id: "call-late",
+            name: "local.write",
+            argumentsObject: ["path": "Late.swift", "content": "let late = true\n"],
+            argumentsJSON: #"{"path":"Late.swift","content":"let late = true\n"}"#
+        )
+        let result = DirectAgentToolResult(
+            output: "Updated",
+            summary: "Updated",
+            fileChanges: [],
+            elapsed: nil
+        )
+
+        await presenter.presentToolCallCompleted(call, result: result)
+
+        let updates = Self.updates(output)
+        #expect(updates.compactMap { $0.objectValue?["sessionUpdate"]?.acpStringValue }
+            == ["tool_call", "tool_call_update"])
+        #expect(updates.allSatisfy { $0.objectValue?["toolCallId"]?.acpStringValue == "call-late" })
+
+        // A completion of a call the client already saw adds only the update
+        // after its creation.
+        let shown = WireLog()
+        let shownPresenter = ACPPromptPresenter(
+            sessionID: "shown-tool-session",
+            workspaceURL: URL(fileURLWithPath: "/tmp/workspace", isDirectory: true),
+            writer: ACPWriter(sink: { data in
+                if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                    shown.messages.withLock { $0.append(value) }
+                }
+            }),
+            updatePipeline: nil,
+            ensureTasklessObserver: {},
+            claimDelegatedToolNotification: { _ in true }
+        )
+        await shownPresenter.presentToolCallStarted(call)
+        await shownPresenter.presentToolCallCompleted(call, result: result)
+        #expect(Self.updates(shown).compactMap { $0.objectValue?["sessionUpdate"]?.acpStringValue }
+            == ["tool_call", "tool_call_update"])
+    }
+
+    /// The same for a delegated agent's tool: a completion alone shows the
+    /// call first, with the agent's id and title.
+    @Test
+    func aDelegatedCompletionWithoutItsStartWritesTheCreationFirst() async {
+        let output = WireLog()
+        let presenter = ACPPromptPresenter(
+            sessionID: "late-delegated-session",
+            workspaceURL: URL(fileURLWithPath: "/tmp/workspace", isDirectory: true),
+            writer: ACPWriter(sink: { data in
+                if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                    output.messages.withLock { $0.append(value) }
+                }
+            }),
+            updatePipeline: nil,
+            ensureTasklessObserver: {},
+            claimDelegatedToolNotification: { _ in true }
+        )
+        let call = DirectAgentToolCall(
+            id: "call-1",
+            name: "local.write",
+            argumentsObject: ["path": "Delegated.swift", "content": "let value = 2\n"],
+            argumentsJSON: #"{"path":"Delegated.swift","content":"let value = 2\n"}"#
+        )
+        await presenter.presentSubAgentToolEvent(DirectSubAgentToolEvent(
+            agentID: "worker-1",
+            agentName: "Worker",
+            toolCall: call,
+            lifecycle: .completed(DirectAgentToolResult(
+                output: "Updated",
+                summary: "Updated",
+                fileChanges: [],
+                elapsed: nil
+            )),
+            rootSessionID: "late-delegated-session"
+        ))
+
+        let delegated = Self.delegatedUpdates(output)
+        #expect(delegated.compactMap { $0.objectValue?["sessionUpdate"]?.acpStringValue }
+            == ["tool_call", "tool_call_update"])
+        #expect(delegated.allSatisfy {
+            $0.objectValue?["toolCallId"]?.acpStringValue == "acp:tool:worker-1:call-1"
+        })
+        #expect(delegated.allSatisfy {
+            $0.objectValue?["title"]?.acpStringValue?.hasPrefix("Worker — ") == true
+        })
+    }
 }

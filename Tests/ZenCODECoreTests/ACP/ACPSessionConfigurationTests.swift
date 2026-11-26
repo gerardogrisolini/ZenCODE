@@ -283,6 +283,121 @@ extension ACPCompatibilityTests {
         #expect(configuration.runtimeConfiguration.profileRole == reviewer.role)
     }
 
+    /// The mention recomposes the grant the way `session/new` did: what the
+    /// client asked for, narrowed by the agent. It therefore never widens the
+    /// request's restriction to the mentioned agent's other tools.
+    @Test
+    func anAgentMentionNeverWidensTheRequestsToolRestriction() async throws {
+        let developer = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            role: .developer,
+            tools: ["shell", "files"]
+        )
+        let reviewer = AgentProfile(
+            id: "reviewer",
+            name: "Reviewer",
+            readOnly: true,
+            role: .reviewer,
+            tools: ["shell", "files"]
+        )
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [developer, reviewer],
+            agentName: developer.name,
+            backendFactory: { _, _ in CapturingACPBackend() }
+        )
+
+        try await bridge.newSession(id: nil, params: [
+            "cwd": "/tmp/acp-mention-grant",
+            "agentId": developer.id,
+            "allowed_tools": ["local.read"] as [String]
+        ])
+        let initialConfiguration = try #require(
+            await bridge.sessionConfigurationsForTesting().first
+        )
+        let sessionID = initialConfiguration.sessionID
+        let grantedBefore = try #require(initialConfiguration.allowedToolNames)
+
+        try await bridge.prompt(id: nil, params: [
+            "sessionId": sessionID,
+            "prompt": "@Reviewer inspect the change"
+        ])
+
+        let routedConfiguration = try #require(await bridge.sessionConfigurationsForTesting().first)
+        let allowedToolNames = try #require(routedConfiguration.allowedToolNames)
+        #expect(routedConfiguration.agentID == reviewer.id)
+        #expect(allowedToolNames.isSubset(of: grantedBefore))
+        #expect(allowedToolNames.contains("local.read"))
+    }
+
+    /// A mention keeps the tools the session holds outside the agent's own
+    /// profile, the client's MCP servers among them: they belong to the
+    /// session's grant, not to the agent it runs on.
+    @Test
+    func anAgentMentionKeepsTheToolsOfTheSessionsProvidedServers() async throws {
+        let developer = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            role: .developer,
+            tools: ["shell", "files"]
+        )
+        let reviewer = AgentProfile(
+            id: "reviewer",
+            name: "Reviewer",
+            readOnly: true,
+            role: .reviewer,
+            tools: ["shell", "files"]
+        )
+        let bridge = try makeBridge(
+            models: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            availableAgents: [developer, reviewer],
+            agentName: developer.name,
+            backendFactory: { _, _ in CapturingACPBackend() }
+        )
+        let sessionID = "acp-mention-provided-tools-\(UUID().uuidString.lowercased())"
+        let sessionConfiguration = AgentCoreSessionConfiguration(
+            sessionID: sessionID,
+            modelID: "test-model",
+            workingDirectory: URL(fileURLWithPath: "/tmp/acp-mention-provided-tools"),
+            systemPrompt: "ACP mention tool grant test",
+            cacheKey: nil,
+            history: [],
+            allowedToolNames: ["local.read", "xcode-tools.build"]
+        )
+        try await bridge.sessionRunner.createSession(configuration: sessionConfiguration)
+        await bridge.installTestSession(sessionConfiguration)
+
+        try await bridge.prompt(id: nil, params: [
+            "sessionId": sessionID,
+            "prompt": "@Reviewer inspect the change"
+        ])
+
+        let routedConfiguration = try #require(await bridge.sessionConfigurationsForTesting().first)
+        let allowedToolNames = try #require(routedConfiguration.allowedToolNames)
+        #expect(routedConfiguration.agentID == reviewer.id)
+        #expect(allowedToolNames.contains("xcode-tools.build"))
+        #expect(allowedToolNames.contains("local.read"))
+        #expect(
+            !DirectToolExecutor.isCoreCoordinationToolAllowed(
+                "local.edit",
+                allowedToolNames: allowedToolNames
+            )
+        )
+    }
+
     @Test
     func newSessionUsesAgentThinkingOverHostedDefault() async throws {
         let model = Self.thinkingModel(defaultThinkingSelection: .medium)

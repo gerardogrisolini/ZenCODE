@@ -10,11 +10,17 @@ import Foundation
 import ToolCore
 import ZenCODERuntime
 
-/// Thrown by `ensureNotShutDown()` once `shutdown()` latched.
+/// Thrown once `shutdown()` latched: by `ensureNotShutDown()`, by a host that
+/// shut down, and by `lifecycleOperationFenceError()` for an operation fenced
+/// by the shutdown.
 ///
 /// It is deliberately *not* an `ACPError`: the transport is closing, so the
-/// request is abandoned without writing a JSON-RPC response. Wire format for
-/// every non-shutdown outcome is unchanged.
+/// request is abandoned without writing a JSON-RPC response. It means
+/// "shutdown" and nothing else: a lifecycle operation whose incarnation ended
+/// while the transport is still open (`session/close`, or a replacement of the
+/// same id) fails with an `ACPError` instead, because JSON-RPC requires a
+/// response (see `lifecycleOperationFenceError()`). Wire format for every
+/// other outcome is unchanged.
 struct ACPShutdownFenceError: Error {}
 
 public actor ZenCODEACPBridge {
@@ -29,6 +35,14 @@ public actor ZenCODEACPBridge {
         public let id: String
         public let cwd: String
         public let allowedToolNames: Set<String>?
+        /// The session's own tool grant before the selected agent narrowed it:
+        /// the client request's grant (or the agent's, without one), the tools
+        /// of the MCP servers the client provided, and the prompt-skill tools
+        /// (see `sessionBaseAllowedToolNames`). An agent mention recomposes the
+        /// grant from it, so routing the session to another agent keeps the
+        /// servers and the request's restriction. `nil` is a session whose own
+        /// grant is not a restriction.
+        var baseAllowedToolNames: Set<String>?
         public let configuration: AgentCoreSessionConfiguration
         /// Identifies this incarnation of the session. `session/close` and
         /// `shutdown` drop it, so work started under an older epoch can never
@@ -149,13 +163,25 @@ public actor ZenCODEACPBridge {
     /// Tokens of lifecycle operations (`session/new`, `load`, `resume`,
     /// `set_model`, `set_config_option`) that are currently suspended. Cleared
     /// wholesale by `shutdown()`, which turns every later re-check into a
-    /// `ACPShutdownFenceError`.
+    /// `ACPShutdownFenceError` (see `lifecycleOperationFenceError()`).
     private var lifecycleOperations: Set<UInt64> = []
     /// Session incarnation a lifecycle operation acts on, for the handlers that
     /// mutate an existing session. `session/close` invalidates exactly the
     /// operations bound to the incarnation it closes, and nothing else.
     private var lifecycleOperationBindings: [UInt64: SessionBinding] = [:]
     private var nextLifecycleOperationToken: UInt64 = 1
+    /// The lifecycle operation opening a session id that the process does not
+    /// hold yet, by session id.
+    ///
+    /// `session/load` and `session/resume` claim the id in the same synchronous
+    /// step that finds it not live, before their first suspension: two of them
+    /// for one id would each open an incarnation, and the one that publishes
+    /// last would replace the other's entry, leaving its host slot, its MCP
+    /// servers, and its task-graph observer behind. The claim is released by the
+    /// restore that holds it (`releaseSessionRestore`), and invalidated — not
+    /// removed — by `session/close` and `session/delete`, so the restore answers
+    /// with an error and still holds the id until it unwinds.
+    private var sessionRestores: [String: UInt64] = [:]
     /// `session/prompt` handlers currently running, by session id. This tracks
     /// the *ACP wrapper* — the task that flushes buffered updates, refreshes
     /// session state and writes the final `stopReason` reply. A
@@ -236,6 +262,7 @@ public actor ZenCODEACPBridge {
         // answer on the closing transport.
         lifecycleOperations.removeAll()
         lifecycleOperationBindings.removeAll()
+        sessionRestores.removeAll()
         // Unblock every close currently draining a prompt handler: its prompt
         // is cancelled below (and its late writes are already fenced by the
         // writer), so the close must be free to proceed to its own fenced
@@ -372,8 +399,60 @@ public actor ZenCODEACPBridge {
         lifecycleOperationBindings.removeValue(forKey: token)
     }
 
+    /// Fences one lifecycle operation without touching the others, as
+    /// `session/close` fences the operations bound to the incarnation it ends.
+    func invalidateLifecycleOperation(_ token: UInt64) {
+        lifecycleOperations.remove(token)
+        lifecycleOperationBindings.removeValue(forKey: token)
+    }
+
+    // MARK: - Restore claims
+
+    /// Claims `sessionID` for the restore `operation` is opening, in one
+    /// synchronous step: `false` when another restore already holds it.
+    func reserveSessionRestore(_ sessionID: String, operation: UInt64) -> Bool {
+        guard sessionRestores[sessionID] == nil else {
+            return false
+        }
+        sessionRestores[sessionID] = operation
+        return true
+    }
+
+    /// Releases the claim of `sessionID` when `operation` still holds it: a late
+    /// release never frees the claim of a newer restore.
+    func releaseSessionRestore(_ sessionID: String, operation: UInt64) {
+        guard sessionRestores[sessionID] == operation else {
+            return
+        }
+        sessionRestores.removeValue(forKey: sessionID)
+    }
+
+    /// Fences the restore of `sessionID` that is opening right now, if any: it
+    /// answers the error of a closed session and cleans its own incarnation up,
+    /// while the id stays claimed until it unwinds.
+    func invalidateSessionRestore(_ sessionID: String) {
+        guard let operation = sessionRestores[sessionID] else {
+            return
+        }
+        invalidateLifecycleOperation(operation)
+    }
+
+    /// `true` while a restore of `sessionID` is opening it.
+    func isSessionRestoreClaimed(_ sessionID: String) -> Bool {
+        sessionRestores[sessionID] != nil
+    }
+
+    /// The answer to a restore of a session another request is opening.
+    static func sessionRestoreBusyMessage(_ sessionID: String) -> String {
+        "Session \(sessionID) is already being loaded or resumed. Retry after that request completes."
+    }
+
     /// `true` while the operation is still registered, i.e. not fenced by a
     /// `shutdown()` or by a `session/close` of the incarnation it is bound to.
+    ///
+    /// It does not tell the two apart: the caller that fails the request
+    /// takes the error from `lifecycleOperationFenceError()`, which answers a
+    /// close and stays silent for a shutdown.
     func isLifecycleOperationLive(_ token: UInt64) -> Bool {
         guard !didShutDown, lifecycleOperations.contains(token) else {
             return false
@@ -388,10 +467,29 @@ public actor ZenCODEACPBridge {
     }
 
     /// Combined re-check for a lifecycle operation after a suspension point.
+    ///
+    /// A fenced operation throws `lifecycleOperationFenceError()`: the
+    /// `ACPShutdownFenceError` of a `shutdown()` (no response is written), or
+    /// an `ACPError` the dispatcher answers when a `session/close` or a
+    /// replacement of the same id ended the incarnation under the request.
     func ensureLifecycleOperationLive(_ token: UInt64) throws {
         guard isLifecycleOperationLive(token) else {
-            throw ACPShutdownFenceError()
+            throw lifecycleOperationFenceError()
         }
+    }
+
+    /// The failure of a lifecycle operation whose incarnation ended while it
+    /// was suspended: a `session/close` (or a replacement of the same id)
+    /// answers the request with a JSON-RPC error, because the transport is
+    /// still open and JSON-RPC requires a response. A `shutdown()`, whose
+    /// transport is closing, stays silent.
+    func lifecycleOperationFenceError() -> Error {
+        guard !didShutDown else {
+            return ACPShutdownFenceError()
+        }
+        return ACPError.invalidParams(
+            "The session was closed or replaced before this request completed."
+        )
     }
 
     /// Opens, in the host, the slot and the incarnation of a new ACP session

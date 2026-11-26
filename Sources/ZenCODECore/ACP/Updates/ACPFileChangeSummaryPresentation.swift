@@ -36,13 +36,25 @@ enum ACPFileChangeSummaryPresentation {
         var lines = [
             "**🪬 Summary: \(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)**",
         ]
-        lines.append(contentsOf: summary.entries.map(TurnFileChangeSummaryPresentation.entry))
+        lines.append(contentsOf: summary.entries.map(entry))
         lines.append(
             summary.canUndo
                 ? "**`/undo`** to revert · **`/changes diff`** to show patches."
                 : "Undo is not available for this summary."
         )
         return "\n\n\n" + lines.joined(separator: "\n") + "\n"
+    }
+
+    /// One file of the Summary, its path in a code span: a name that holds
+    /// `*`, `_`, or `[` does not change how the client renders the section, and
+    /// stays copyable. The terminal and Telegram keep the plain shared text.
+    static func entry(_ entry: TurnFileChangeSummary.Entry) -> String {
+        // A backtick in the name would end the span early.
+        let path = "`\(entry.path.replacingOccurrences(of: "`", with: "'"))`"
+        if entry.isBinary {
+            return "  \(entry.status.rawValue) \(path) (binary)"
+        }
+        return "  \(entry.status.rawValue) \(path)  +\(entry.additions) -\(entry.deletions)"
     }
 }
 

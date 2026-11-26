@@ -27,6 +27,14 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     private var workflowIsSuspended = false
     private var completesWorkflowDirectly = false
     private var observedToolGrants: [Set<String>?] = []
+    private var nextTurnFailure: RemoteGenerationClientError?
+
+    /// Fails the next prompt with `error` before it reaches any scripted
+    /// answer, so a test can drive how the bridge maps a turn that ended
+    /// without a response.
+    func failNextTurn(with error: RemoteGenerationClientError) {
+        nextTurnFailure = error
+    }
 
     func recordedToolGrants() -> [Set<String>?] { observedToolGrants }
 
@@ -126,6 +134,10 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
     ) async throws -> DirectAgentResponse {
         turn += 1
         prompts.append(prompt)
+        if let nextTurnFailure {
+            self.nextTurnFailure = nil
+            throw nextTurnFailure
+        }
         if interruptNextWorkflow {
             interruptNextWorkflow = false
             if pauseBeforeInterruption {
