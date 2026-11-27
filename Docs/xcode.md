@@ -22,11 +22,14 @@ Xcode can run `zen` as an ACP stdio coding agent.
    `xcode-tools-feature` process.
 
    Xcode also passes its own `xcode-tools` MCP server to every ACP session.
-   When the session's agent has the Xcode feature enabled, `zen` does not
-   start that server: the feature is the only connection to Xcode, its tools
-   are named `xcode.*`, and Xcode asks for the MCP consent once. An agent
-   without the feature uses Xcode's server instead, with tools named
-   `xcode-tools.*`.
+   With the `xcode-tools` feature installed and enabled, `zen` does not start
+   that server, even when the session's agent does not select the feature:
+   the session uses the feature's tools, named `xcode.*`, so `zen` opens a
+   single connection to Xcode, which asks for the MCP consent once, and the
+   changes the tools make to files show their diffs and artifacts like local
+   writes. Without the feature installed, the session uses Xcode's own
+   server, with tools named `xcode-tools.*` and no diff or artifact for the
+   changes they make to files.
 
 3. Make sure the recommended agents exist. The setup can create `Developer`, `Builder`, `Planner`, `Reviewer`, and `Reporter`.
 4. Verify the executable path:

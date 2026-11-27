@@ -108,6 +108,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   used by `zen` and by the macOS app created a feature runtime for every
   backend, and releasing the old one closed the persistent feature processes
   and the `mcpbridge` connection.
+- ACP: when Xcode provides its `xcode-tools` MCP server and the `xcode-tools`
+  feature is installed, the session now uses the feature even if the agent's
+  profile does not select it: the client's server is not started, and the
+  session is granted the feature's `xcode.*` tools in its place. The changes
+  those tools make to files now show their diffs and artifacts like local
+  writes, and Xcode connects once, so it asks for its MCP consent once. Before,
+  a profile without the feature ran Xcode's own server as a generic MCP server
+  (`xcode-tools.*`), whose file changes produced no diff or artifact. Without
+  the feature installed, Xcode's server is still used.
 
 ## [6.2.2] - 2026-11-25
 

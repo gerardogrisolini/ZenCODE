@@ -15,7 +15,17 @@ import ZenCODECore
         draft: $draft,
         isBusy: false,
         commands: ZenControlsPreviewData.commands
-    )
+    ) {
+        ZenStatusBar(state: ZenStatusBarState(
+            modelID: "openai/gpt-5",
+            agentName: "Developer",
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 15_000,
+                completionTokenCount: 20_000,
+                responseDurationSeconds: 12
+            )
+        ))
+    }
     .padding()
     .frame(width: 640)
 }

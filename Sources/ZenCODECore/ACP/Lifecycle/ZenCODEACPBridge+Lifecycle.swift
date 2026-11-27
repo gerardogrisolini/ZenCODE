@@ -35,8 +35,9 @@ extension ZenCODEACPBridge {
         let modelID = requestedModelID
             ?? defaultSessionModelID(for: selectedAgent)
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
-        // The session's own tool grant, resolved before its MCP servers are
-        // installed: it tells which of them a feature of the session replaces.
+        // The session's own tool grant: the request's, else the agent's. The
+        // tools of the MCP servers the client provides, or of the features that
+        // replace them, are added to it once they are installed.
         let resolvedRequestedAllowedToolNames = await requestedSessionAllowedToolNames(
             from: params,
             selectedAgent: selectedAgent,
@@ -47,14 +48,13 @@ extension ZenCODEACPBridge {
             sessionID: sessionID,
             cwd: cwd,
             params: params,
-            requestedAllowedToolNames: resolvedRequestedAllowedToolNames,
             operation: operation
-        ) { incarnation, acpMCPDescriptors in
+        ) { incarnation, acpMCPServers in
             let cacheKey = (params["sessionKey"] as? String)
                 ?? (params["cacheKey"] as? String)
             let baseAllowedToolNames = Self.sessionBaseAllowedToolNames(
                 resolvedRequestedAllowedToolNames,
-                adding: acpMCPDescriptors
+                adding: acpMCPServers
             )
             let allowedToolNames = Self.narrowedSessionAllowedToolNames(
                 baseAllowedToolNames,
@@ -150,11 +150,12 @@ extension ZenCODEACPBridge {
 
     /// Opens, for the lifecycle `operation`, a new incarnation of the ACP
     /// session `sessionID` in `cwd`, installs the MCP servers `params`
-    /// provide, and runs `body` with the incarnation and the descriptors of
-    /// those servers: the shared part of `session/new` and of the restore of
-    /// a session that is not live. `requestedAllowedToolNames` is the
-    /// session's own tool grant (see `requestedSessionAllowedToolNames`): a
-    /// server one of its features replaces is not installed.
+    /// provide, and runs `body` with the incarnation and what those servers
+    /// contribute to the session's grant: the shared part of `session/new` and
+    /// of the restore of a session that is not live. A server that a loaded
+    /// feature of the same name replaces is not installed, whatever the
+    /// session's tool grant selects; the feature's tool names stand in its
+    /// place in `acpMCPServers` (see `installACPProvidedMCPServers`).
     ///
     /// The incarnation is opened in the host before the MCP servers are
     /// installed: the ownership stamped on those registrations identifies
@@ -170,16 +171,14 @@ extension ZenCODEACPBridge {
         sessionID: String,
         cwd: String,
         params: [String: Any],
-        requestedAllowedToolNames: Set<String>?,
         operation: UInt64,
-        _ body: (_ incarnation: ChatSessionIncarnation, _ acpMCPDescriptors: [DirectToolDescriptor]) async throws -> Value
+        _ body: (_ incarnation: ChatSessionIncarnation, _ acpMCPServers: ACPProvidedMCPServers) async throws -> Value
     ) async throws -> Value {
         let incarnation = try await openACPSession(sessionID: sessionID, cwd: cwd)
         do {
             try ensureLifecycleOperationLive(operation)
-            let acpMCPDescriptors = await registerACPProvidedMCPServers(
+            let acpMCPServers = await installACPProvidedMCPServers(
                 from: params,
-                requestedAllowedToolNames: requestedAllowedToolNames,
                 ownership: DirectMCPToolRuntime.MCPSessionOwnership(
                     sessionID: sessionID,
                     epoch: incarnation.epoch
@@ -187,7 +186,7 @@ extension ZenCODEACPBridge {
                 operation: operation
             )
             try ensureLifecycleOperationLive(operation)
-            return try await body(incarnation, acpMCPDescriptors)
+            return try await body(incarnation, acpMCPServers)
         } catch {
             await discardSessionIfCurrent(id: sessionID, epoch: incarnation.epoch)
             await closeACPSlot(of: incarnation)
@@ -230,14 +229,17 @@ extension ZenCODEACPBridge {
 
     /// The session's own tool grant, before the selected agent narrows it: the
     /// resolved request, with the tools of the MCP servers the session provided
-    /// and the prompt-skill tools. `nil` (no restriction) stays `nil`.
+    /// (or, for a server a loaded feature of the same name replaced, the tools
+    /// of that feature) and the prompt-skill tools. `nil` (no restriction)
+    /// stays `nil` unless a server or a replacing feature adds names to it.
     static func sessionBaseAllowedToolNames(
         _ resolvedRequestedAllowedToolNames: Set<String>?,
-        adding acpMCPDescriptors: [DirectToolDescriptor]
+        adding acpMCPServers: ACPProvidedMCPServers
     ) -> Set<String>? {
         var allowedToolNames = Self.allowedToolNames(
             resolvedRequestedAllowedToolNames,
-            adding: acpMCPDescriptors
+            adding: acpMCPServers.descriptors,
+            replacingFeatureToolNames: acpMCPServers.replacingFeatureToolNames
         )
         if var effectiveAllowedToolNames = allowedToolNames {
             effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
@@ -267,8 +269,9 @@ extension ZenCODEACPBridge {
     }
 
     /// The tools a new session asks for on its own, before the tools of the
-    /// MCP servers it provides are added: the request's, else the selected
-    /// agent's. `nil` is a request with no tool grant of its own.
+    /// MCP servers it provides, or of the features that replace them, are
+    /// added: the request's, else the selected agent's. `nil` is a request
+    /// with no tool grant of its own.
     private func requestedSessionAllowedToolNames(
         from params: [String: Any],
         selectedAgent: AgentProfile?,
@@ -366,37 +369,31 @@ extension ZenCODEACPBridge {
         try ensureLifecycleOperationLive(operation)
         // The saved session of this id, unless the client sends its own
         // history, which wins. Read before the agent is resolved: the agent
-        // decides the tool grant and the MCP servers that are installed. The
-        // read does not suspend.
+        // decides the session's tool grant. The read does not suspend.
         let savedSession = Self.runtimeHistory(from: params["history"]).isEmpty
             ? savedACPSession(id: sessionID, workingDirectory: workingDirectory)
             : nil
-        // Resolved before the incarnation opens, as `session/new` does: the
-        // agent's tool grant tells which MCP servers its features replace.
+        // Resolved before the incarnation opens, as `session/new` does: an
+        // agent that cannot be resolved fails the restore before any MCP
+        // server is installed.
         let selectedAgent = try resolvedACPAgentProfile(
             from: params,
             workingDirectory: workingDirectory,
             savedAgentID: savedSession?.agentID,
             savedAgentName: savedSession?.agentName
         )
-        let requestedAllowedToolNames = await requestedSessionAllowedToolNames(
-            from: params,
-            selectedAgent: selectedAgent,
-            workingDirectory: workingDirectory
-        )
         try ensureLifecycleOperationLive(operation)
         let restoredSessionEpoch = try await withNewIncarnation(
             sessionID: sessionID,
             cwd: workingDirectory.path,
             params: params,
-            requestedAllowedToolNames: requestedAllowedToolNames,
             operation: operation
-        ) { incarnation, acpMCPDescriptors in
+        ) { incarnation, acpMCPServers in
             let restored = await restoredACPClientSessionConfiguration(
                 sessionID: sessionID,
                 params: params,
                 workingDirectory: workingDirectory,
-                acpMCPDescriptors: acpMCPDescriptors,
+                acpMCPServers: acpMCPServers,
                 selectedAgent: selectedAgent,
                 savedSession: savedSession
             )
@@ -515,7 +512,7 @@ extension ZenCODEACPBridge {
         sessionID: String,
         params: [String: Any],
         workingDirectory: URL,
-        acpMCPDescriptors: [DirectToolDescriptor],
+        acpMCPServers: ACPProvidedMCPServers,
         selectedAgent: AgentProfile?,
         savedSession: TerminalSavedSession?
     ) async -> (configuration: AgentCoreSessionConfiguration, baseAllowedToolNames: Set<String>?) {
@@ -534,7 +531,7 @@ extension ZenCODEACPBridge {
         )
         let baseAllowedToolNames = Self.sessionBaseAllowedToolNames(
             resolvedRequestedAllowedToolNames,
-            adding: acpMCPDescriptors
+            adding: acpMCPServers
         )
         let allowedToolNames = Self.narrowedSessionAllowedToolNames(
             baseAllowedToolNames,

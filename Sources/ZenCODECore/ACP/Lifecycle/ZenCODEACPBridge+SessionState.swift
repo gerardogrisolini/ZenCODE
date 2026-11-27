@@ -215,12 +215,32 @@ extension ZenCODEACPBridge {
         _ allowedToolNames: Set<String>?,
         adding descriptors: [DirectToolDescriptor]
     ) -> Set<String>? {
-        let descriptorNames = Set(descriptors.map(\.name).filter { !$0.isEmpty })
-        guard !descriptorNames.isEmpty else {
+        Self.allowedToolNames(
+            allowedToolNames,
+            adding: descriptors,
+            replacingFeatureToolNames: []
+        )
+    }
+
+    /// `allowedToolNames` with the names of `descriptors` (the tools of the MCP
+    /// servers a session provided) and `replacingFeatureToolNames` (the tools
+    /// of the features that replaced a server of the session instead) added.
+    /// Both enter the grant the same way: when there are none, the grant is
+    /// returned unchanged, so `nil` (no restriction) stays `nil`; otherwise
+    /// `nil` becomes exactly those names.
+    static func allowedToolNames(
+        _ allowedToolNames: Set<String>?,
+        adding descriptors: [DirectToolDescriptor],
+        replacingFeatureToolNames: Set<String>
+    ) -> Set<String>? {
+        let addedNames = Set(descriptors.map(\.name))
+            .union(replacingFeatureToolNames)
+            .filter { !$0.isEmpty }
+        guard !addedNames.isEmpty else {
             return allowedToolNames
         }
         var merged = allowedToolNames ?? []
-        merged.formUnion(descriptorNames)
+        merged.formUnion(addedNames)
         return merged
     }
 

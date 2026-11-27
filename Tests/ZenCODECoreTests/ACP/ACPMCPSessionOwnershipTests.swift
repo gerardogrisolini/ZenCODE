@@ -5,13 +5,16 @@
 //  Proves that MCP servers provided by one ACP session are not visible to
 //  non-owning sessions, that session/close, lifecycle rollback and
 //  shutdown release the session's MCP registrations, and that a server a
-//  feature of the session replaces is never started.
+//  loaded feature of the same name replaces is never started, whatever the
+//  session's tool grant selects: the session is granted the feature's tools
+//  in its place.
 //
 
 #if os(macOS)
   import FeatureMCPBridgeKit
   import Foundation
   @testable import ZenCODECore
+  @testable import ZenCODERuntime
   import Testing
   import ToolCore
 
@@ -123,6 +126,38 @@
       mcpRuntime: mcpRuntime,
       swiftFeatureRuntime: swiftFeatureRuntime
     )
+  }
+
+  /// A bridge whose launch selected no agent (`AgentConfiguration` built from
+  /// the command line alone), so a session that brings no `allowedTools` has no
+  /// tool grant of its own (`nil`): the case where the servers of a request are
+  /// what restricts it.
+  private func makeAgentlessOwnershipBridge(
+    mcpRuntime: DirectMCPToolRuntime,
+    swiftFeatureRuntime: SwiftFeatureRuntime
+  ) throws -> ZenCODEACPBridge {
+    ZenCODEACPBridge(
+      configuration: try AgentConfiguration.withoutPersistedConfiguration(
+        arguments: ["--acp", "--model", "test-model"]
+      ),
+      writer: ACPWriter(),
+      mcpRuntime: mcpRuntime,
+      swiftFeatureRuntime: swiftFeatureRuntime
+    )
+  }
+
+  /// Runs `body` with the support directory scoped to a UUID temporary one,
+  /// removed afterwards, so nothing reads or writes the real `~/.zencode`.
+  private func withTemporarySupportDirectory(
+    _ body: () async throws -> Void
+  ) async throws {
+    let support = FileManager.default.temporaryDirectory
+      .appendingPathComponent("acp-mcp-feature-support-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: support) }
+    try await AppStorageDirectory.withSupportDirectoryURL(support) {
+      try await body()
+    }
   }
 
   /// A runtime whose only feature, `demo-tools`, owns the tool `demo.run` and
@@ -520,12 +555,109 @@
       try await kept.waitForExit()
     }
 
-    /// A session whose tool grant does not select the feature has no other
-    /// source for those tools: the client's server of the same name is
-    /// installed, as any other.
+    /// A loaded feature replaces the client's server of its name whatever the
+    /// session's own tool grant selects: with `allowedTools: ["local.read"]`
+    /// the feature is outside the grant, yet the server is never started or
+    /// visible, and the grant gains exactly the names a profile selecting
+    /// `feature:demo-tools` is given (never the server's tools).
     @Test
-    func clientMCPServerNamedLikeAFeatureOutsideTheGrantIsInstalled() async throws {
-      let fixture = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+    func clientMCPServerNamedLikeALoadedFeatureOutsideTheGrantIsNotStarted() async throws {
+      let replaced = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      let kept = try ACPMCPFixture(serverName: "other", toolName: "owned")
+      defer {
+        replaced.removeFiles()
+        kept.removeFiles()
+      }
+      let mcpRuntime = DirectMCPToolRuntime()
+      let featureRuntime = makeDemoFeatureRuntime()
+      let bridge = try makeOwnershipBridge(
+        mcpRuntime: mcpRuntime,
+        swiftFeatureRuntime: featureRuntime
+      )
+
+      try await bridge.newSession(id: nil, params: [
+        "cwd": "/tmp/acp-mcp-feature-outside-grant-\(UUID().uuidString)",
+        "allowedTools": ["local.read"],
+        "mcpServers": [replaced.definition, kept.definition]
+      ])
+      let configuration = try #require(
+        await bridge.sessionConfigurationsForTesting().first
+      )
+
+      let visible = await mcpRuntime.descriptors(
+        allowedToolNames: nil,
+        preferredWorkspaceRootURL: nil,
+        sessionID: configuration.sessionID
+      ).map(\.name)
+      #expect(visible == [kept.prefixedToolName])
+      #expect(FileManager.default.fileExists(atPath: kept.startedURL.path))
+      #expect(
+        !FileManager.default.fileExists(atPath: replaced.startedURL.path),
+        "A loaded feature replaces the client's server even when the grant does not select it.")
+
+      let allowedToolNames = try #require(configuration.allowedToolNames)
+      #expect(allowedToolNames.contains("local.read"))
+      #expect(allowedToolNames.contains(kept.prefixedToolName))
+      #expect(!allowedToolNames.contains(replaced.prefixedToolName))
+      #expect(DirectToolExecutor.isAllowed("demo.run", allowedToolNames: allowedToolNames))
+      #expect(
+        await featureRuntime.featureToolIsAllowed(
+          toolName: "demo.run",
+          allowedToolNames: allowedToolNames
+        ))
+      #expect(!DirectToolExecutor.isAllowed("local.exec", allowedToolNames: allowedToolNames))
+
+      // An agent mention recomposes the grant from the session's own one: the
+      // feature's names must survive it, as the servers' tools do.
+      let base = try #require(await bridge.baseAllowedToolNamesForTesting())
+      #expect(base.contains("demo.run"))
+      let mentioned = try #require(
+        await bridge.configurationRoutedForTesting(
+          to: AgentProfile(id: "mentioned", name: "Mentioned", role: .developer, tools: [])
+        )?.allowedToolNames
+      )
+      #expect(mentioned.contains("demo.run"))
+      #expect(mentioned.contains(kept.prefixedToolName))
+      #expect(!mentioned.contains(replaced.prefixedToolName))
+
+      await bridge.shutdown()
+      try await kept.waitForExit()
+    }
+
+    /// The server name is compared as the runtime normalizes it, not
+    /// byte for byte: `Demo Tools` is the id of the `demo-tools` feature.
+    @Test
+    func clientMCPServerNameIsComparedToFeatureIDsNormalized() async throws {
+      let replaced = try ACPMCPFixture(serverName: "Demo Tools", toolName: "owned")
+      defer { replaced.removeFiles() }
+      let mcpRuntime = DirectMCPToolRuntime()
+      let bridge = try makeOwnershipBridge(
+        mcpRuntime: mcpRuntime,
+        swiftFeatureRuntime: makeDemoFeatureRuntime()
+      )
+
+      try await bridge.newSession(id: nil, params: [
+        "cwd": "/tmp/acp-mcp-feature-normalized-\(UUID().uuidString)",
+        "allowedTools": ["local.read"],
+        "mcpServers": [replaced.definition]
+      ])
+      let configuration = try #require(
+        await bridge.sessionConfigurationsForTesting().first
+      )
+
+      #expect(!FileManager.default.fileExists(atPath: replaced.startedURL.path))
+      let allowedToolNames = try #require(configuration.allowedToolNames)
+      #expect(allowedToolNames.contains("demo.run"))
+
+      await bridge.shutdown()
+    }
+
+    /// A server whose name matches no loaded feature has no other source for
+    /// its tools: it is installed, as any other, and nothing is added for the
+    /// feature the runtime does load.
+    @Test
+    func clientMCPServerWithNoLoadedFeatureOfItsNameIsInstalled() async throws {
+      let fixture = try ACPMCPFixture(serverName: "unrelated-tools", toolName: "owned")
       defer { fixture.removeFiles() }
       let mcpRuntime = DirectMCPToolRuntime()
       let bridge = try makeOwnershipBridge(
@@ -534,7 +666,7 @@
       )
 
       try await bridge.newSession(id: nil, params: [
-        "cwd": "/tmp/acp-mcp-feature-not-granted",
+        "cwd": "/tmp/acp-mcp-feature-no-match-\(UUID().uuidString)",
         "allowedTools": ["local.read"],
         "mcpServers": [fixture.definition]
       ])
@@ -548,11 +680,279 @@
         sessionID: configuration.sessionID
       ).map(\.name)
       #expect(visible == [fixture.prefixedToolName])
+      #expect(FileManager.default.fileExists(atPath: fixture.startedURL.path))
       let allowedToolNames = try #require(configuration.allowedToolNames)
       #expect(allowedToolNames.contains(fixture.prefixedToolName))
+      #expect(!allowedToolNames.contains("demo.run"))
 
       await bridge.shutdown()
       try await fixture.waitForExit()
+    }
+
+    /// A feature that is not loaded (here: the runtime has none) replaces
+    /// nothing: the client's server of the same name is installed.
+    @Test
+    func clientMCPServerNamedLikeAnUnloadedFeatureIsInstalled() async throws {
+      let fixture = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      defer { fixture.removeFiles() }
+      let mcpRuntime = DirectMCPToolRuntime()
+      let bridge = try makeOwnershipBridge(
+        mcpRuntime: mcpRuntime,
+        swiftFeatureRuntime: SwiftFeatureRuntime(features: [])
+      )
+
+      try await bridge.newSession(id: nil, params: [
+        "cwd": "/tmp/acp-mcp-feature-unloaded-\(UUID().uuidString)",
+        "allowedTools": ["local.read"],
+        "mcpServers": [fixture.definition]
+      ])
+      let configuration = try #require(
+        await bridge.sessionConfigurationsForTesting().first
+      )
+
+      #expect(FileManager.default.fileExists(atPath: fixture.startedURL.path))
+      let allowedToolNames = try #require(configuration.allowedToolNames)
+      #expect(allowedToolNames.contains(fixture.prefixedToolName))
+      #expect(!allowedToolNames.contains("demo.run"))
+
+      await bridge.shutdown()
+      try await fixture.waitForExit()
+    }
+
+    /// The restore of a session that is not live follows the same rule: the
+    /// loaded feature outside the grant replaces the server, and the grant of
+    /// the restored session gains the feature's names.
+    @Test
+    func restoredSessionDoesNotStartAClientMCPServerOfALoadedFeatureOutsideTheGrant() async throws {
+      let replaced = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      let kept = try ACPMCPFixture(serverName: "other", toolName: "owned")
+      defer {
+        replaced.removeFiles()
+        kept.removeFiles()
+      }
+      try await withTemporarySupportDirectory {
+        let mcpRuntime = DirectMCPToolRuntime()
+        let bridge = try makeOwnershipBridge(
+          mcpRuntime: mcpRuntime,
+          swiftFeatureRuntime: makeDemoFeatureRuntime()
+        )
+        let sessionID = "client-feature-outside-grant-\(UUID().uuidString)"
+
+        try await bridge.resumeSession(id: nil, params: [
+          "sessionId": sessionID,
+          "cwd": "/tmp/acp-mcp-feature-outside-grant-resume-\(UUID().uuidString)",
+          "allowedTools": ["local.read"],
+          "mcpServers": [replaced.definition, kept.definition]
+        ])
+
+        let visible = await mcpRuntime.descriptors(
+          allowedToolNames: nil,
+          preferredWorkspaceRootURL: nil,
+          sessionID: sessionID
+        ).map(\.name)
+        #expect(visible == [kept.prefixedToolName])
+        #expect(FileManager.default.fileExists(atPath: kept.startedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: replaced.startedURL.path))
+        let configuration = try #require(
+          await bridge.sessionConfigurationsForTesting().first
+        )
+        let allowedToolNames = try #require(configuration.allowedToolNames)
+        #expect(allowedToolNames.contains("local.read"))
+        #expect(allowedToolNames.contains("demo.run"))
+        #expect(allowedToolNames.contains(kept.prefixedToolName))
+        #expect(!allowedToolNames.contains(replaced.prefixedToolName))
+        let base = try #require(await bridge.baseAllowedToolNamesForTesting())
+        #expect(base.contains("demo.run"))
+
+        await bridge.shutdown()
+        try await kept.waitForExit()
+      }
+    }
+
+    /// The restore of a session with no grant of its own follows the same
+    /// semantic: the replacing feature's names and the other servers' tools
+    /// only, plus the prompt-skill tools.
+    @Test
+    func restoredSessionWithoutAGrantIsGrantedTheReplacingFeatureAndTheOtherServersOnly() async throws {
+      let replaced = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      let kept = try ACPMCPFixture(serverName: "other", toolName: "owned")
+      defer {
+        replaced.removeFiles()
+        kept.removeFiles()
+      }
+      try await withTemporarySupportDirectory {
+        let bridge = try makeAgentlessOwnershipBridge(
+          mcpRuntime: DirectMCPToolRuntime(),
+          swiftFeatureRuntime: makeDemoFeatureRuntime()
+        )
+
+        try await bridge.resumeSession(id: nil, params: [
+          "sessionId": "client-feature-no-grant-\(UUID().uuidString)",
+          "cwd": "/tmp/acp-mcp-feature-no-grant-resume-\(UUID().uuidString)",
+          "mcpServers": [replaced.definition, kept.definition]
+        ])
+        let configuration = try #require(
+          await bridge.sessionConfigurationsForTesting().first
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: replaced.startedURL.path))
+        #expect(
+          configuration.allowedToolNames
+            == Set(["demo.run", kept.prefixedToolName]).union(PromptSkillToolProvider.toolNames))
+        #expect(await bridge.baseAllowedToolNamesForTesting() == configuration.allowedToolNames)
+
+        await bridge.shutdown()
+        try await kept.waitForExit()
+      }
+    }
+
+    /// A session with no grant of its own (no `allowedTools`, no agent) that
+    /// installs a server is granted the tools of its servers only, plus the
+    /// prompt-skill tools. With a replacing feature the feature's names stand
+    /// in for the replaced server's: the grant is the feature's names and the
+    /// tools of the other installed servers, never `nil` (everything), never
+    /// the replaced server's tools.
+    @Test
+    func sessionWithoutAGrantIsGrantedTheReplacingFeatureAndTheOtherServersOnly() async throws {
+      let replaced = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      let kept = try ACPMCPFixture(serverName: "other", toolName: "owned")
+      defer {
+        replaced.removeFiles()
+        kept.removeFiles()
+      }
+      try await withTemporarySupportDirectory {
+        let bridge = try makeAgentlessOwnershipBridge(
+          mcpRuntime: DirectMCPToolRuntime(),
+          swiftFeatureRuntime: makeDemoFeatureRuntime()
+        )
+
+        try await bridge.newSession(id: nil, params: [
+          "cwd": "/tmp/acp-mcp-feature-no-grant-\(UUID().uuidString)",
+          "mcpServers": [replaced.definition, kept.definition]
+        ])
+        let configuration = try #require(
+          await bridge.sessionConfigurationsForTesting().first
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: replaced.startedURL.path))
+        #expect(
+          configuration.allowedToolNames
+            == Set(["demo.run", kept.prefixedToolName]).union(PromptSkillToolProvider.toolNames))
+        #expect(await bridge.baseAllowedToolNamesForTesting() == configuration.allowedToolNames)
+
+        await bridge.shutdown()
+        try await kept.waitForExit()
+      }
+    }
+
+    /// With the replacing feature as the only server of a session without a
+    /// grant, the grant is the feature's names plus the prompt-skill tools:
+    /// the same "restricted to what the session provided" semantic a server
+    /// gives, not "no restriction".
+    @Test
+    func sessionWithoutAGrantWhoseOnlyServerIsReplacedIsGrantedTheFeatureOnly() async throws {
+      let replaced = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      defer { replaced.removeFiles() }
+      try await withTemporarySupportDirectory {
+        let bridge = try makeAgentlessOwnershipBridge(
+          mcpRuntime: DirectMCPToolRuntime(),
+          swiftFeatureRuntime: makeDemoFeatureRuntime()
+        )
+
+        try await bridge.newSession(id: nil, params: [
+          "cwd": "/tmp/acp-mcp-feature-no-grant-only-\(UUID().uuidString)",
+          "mcpServers": [replaced.definition]
+        ])
+        let configuration = try #require(
+          await bridge.sessionConfigurationsForTesting().first
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: replaced.startedURL.path))
+        #expect(
+          configuration.allowedToolNames
+            == Set(["demo.run"]).union(PromptSkillToolProvider.toolNames))
+
+        await bridge.shutdown()
+      }
+    }
+
+    /// Without a replacing feature the semantic of a session with no grant is
+    /// the one it always had: the tools of the installed servers (plus the
+    /// prompt-skill tools) and nothing of the loaded features.
+    @Test
+    func sessionWithoutAGrantAndNoReplacedServerIsGrantedItsServersOnly() async throws {
+      let fixture = try ACPMCPFixture(serverName: "unrelated-tools", toolName: "owned")
+      defer { fixture.removeFiles() }
+      try await withTemporarySupportDirectory {
+        let bridge = try makeAgentlessOwnershipBridge(
+          mcpRuntime: DirectMCPToolRuntime(),
+          swiftFeatureRuntime: makeDemoFeatureRuntime()
+        )
+
+        try await bridge.newSession(id: nil, params: [
+          "cwd": "/tmp/acp-mcp-feature-no-grant-unrelated-\(UUID().uuidString)",
+          "mcpServers": [fixture.definition]
+        ])
+        let configuration = try #require(
+          await bridge.sessionConfigurationsForTesting().first
+        )
+
+        #expect(FileManager.default.fileExists(atPath: fixture.startedURL.path))
+        #expect(
+          configuration.allowedToolNames
+            == Set([fixture.prefixedToolName]).union(PromptSkillToolProvider.toolNames))
+
+        await bridge.shutdown()
+        try await fixture.waitForExit()
+      }
+    }
+
+    /// `registerACPProvidedMCPServers` keeps its public signature: the
+    /// `requestedAllowedToolNames` it still accepts no longer decides which
+    /// server a feature replaces.
+    @Test
+    func registerACPProvidedMCPServersKeepsItsSignatureAndReplacesRegardlessOfTheGrant() async throws {
+      let replaced = try ACPMCPFixture(serverName: "demo-tools", toolName: "owned")
+      let kept = try ACPMCPFixture(serverName: "other", toolName: "owned")
+      defer {
+        replaced.removeFiles()
+        kept.removeFiles()
+      }
+      let mcpRuntime = DirectMCPToolRuntime()
+      let bridge = try makeOwnershipBridge(
+        mcpRuntime: mcpRuntime,
+        swiftFeatureRuntime: makeDemoFeatureRuntime()
+      )
+
+      let descriptors = await bridge.registerACPProvidedMCPServers(
+        from: ["mcpServers": [replaced.definition, kept.definition]],
+        requestedAllowedToolNames: ["local.read"],
+        ownership: DirectMCPToolRuntime.MCPSessionOwnership(
+          sessionID: "register-wrapper",
+          epoch: 1
+        )
+      )
+
+      #expect(descriptors.map(\.name) == [kept.prefixedToolName])
+      #expect(!FileManager.default.fileExists(atPath: replaced.startedURL.path))
+
+      await bridge.shutdown()
+      try await kept.waitForExit()
+    }
+  }
+
+  extension ZenCODEACPBridge {
+    /// The base grant (before an agent narrows it) of the only live session.
+    fileprivate func baseAllowedToolNamesForTesting() -> Set<String>? {
+      sessions.values.first?.baseAllowedToolNames
+    }
+
+    /// The configuration the only live session gets once an `@Agent` mention
+    /// routes it to `agent`.
+    fileprivate func configurationRoutedForTesting(
+      to agent: AgentProfile
+    ) -> AgentCoreSessionConfiguration? {
+      sessions.values.first.map { acpSessionConfiguration(applying: agent, to: $0) }
     }
   }
 #endif

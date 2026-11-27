@@ -37,10 +37,12 @@ public actor ZenCODEACPBridge {
         public let allowedToolNames: Set<String>?
         /// The session's own tool grant before the selected agent narrowed it:
         /// the client request's grant (or the agent's, without one), the tools
-        /// of the MCP servers the client provided, and the prompt-skill tools
-        /// (see `sessionBaseAllowedToolNames`). An agent mention recomposes the
-        /// grant from it, so routing the session to another agent keeps the
-        /// servers and the request's restriction. `nil` is a session whose own
+        /// of the MCP servers the client provided (or, for a server a loaded
+        /// feature of the same name replaced, the tools of that feature), and
+        /// the prompt-skill tools (see `sessionBaseAllowedToolNames`). An agent
+        /// mention recomposes the grant from it, so routing the session to
+        /// another agent keeps the servers, the replacing features, and the
+        /// request's restriction. `nil` is a session whose own
         /// grant is not a restriction.
         var baseAllowedToolNames: Set<String>?
         public let configuration: AgentCoreSessionConfiguration

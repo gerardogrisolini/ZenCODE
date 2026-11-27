@@ -228,4 +228,47 @@ extension ACPCompatibilityTests {
 
         #expect(allowedTools == ["local.exec", "xcode.BuildProject"])
     }
+
+    /// The names of the features that replaced a client's MCP server enter the
+    /// grant where the servers' tools do: with the same semantic for a grant of
+    /// `nil` (no restriction), which stays `nil` only when nothing is added.
+    @Test
+    func allowedToolNamesIncludeTheToolsOfTheFeaturesReplacingMCPServers() {
+        let serverTool = DirectToolDescriptor(
+            name: "other.owned",
+            description: "Fixture: server tool",
+            inputSchema: "{}"
+        )
+
+        #expect(
+            ZenCODEACPBridge.allowedToolNames(
+                ["local.exec"],
+                adding: [],
+                replacingFeatureToolNames: ["demo.run", "demo."]
+            ) == ["local.exec", "demo.run", "demo."])
+        #expect(
+            ZenCODEACPBridge.allowedToolNames(
+                nil,
+                adding: [serverTool],
+                replacingFeatureToolNames: ["demo.run"]
+            ) == ["other.owned", "demo.run"])
+        #expect(
+            ZenCODEACPBridge.allowedToolNames(
+                nil,
+                adding: [],
+                replacingFeatureToolNames: ["demo.run"]
+            ) == ["demo.run"])
+        #expect(
+            ZenCODEACPBridge.allowedToolNames(
+                nil,
+                adding: [],
+                replacingFeatureToolNames: []
+            ) == nil)
+        #expect(
+            ZenCODEACPBridge.allowedToolNames(
+                ["local.exec"],
+                adding: [],
+                replacingFeatureToolNames: [""]
+            ) == ["local.exec"])
+    }
 }

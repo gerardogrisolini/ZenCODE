@@ -111,8 +111,9 @@ extension ZenCODEACPBridge {
     /// The configuration of the live `session` routed to `agent` for the rest of
     /// the turn, keeping what the session was granted and narrowing it by the
     /// agent's policy, exactly as `session/new` composed it: the client
-    /// request's own grant, the tools of the MCP servers the client provided,
-    /// and the prompt-skill tools, then ``AgentProfile/resolvedAllowedToolNames(_:)``.
+    /// request's own grant, the tools of the MCP servers the client provided
+    /// (or of the features that replaced them), and the prompt-skill tools,
+    /// then ``AgentProfile/resolvedAllowedToolNames(_:)``.
     /// Reading the grant back from the session's current configuration would
     /// drop the servers and the request's restriction, and could widen it.
     func acpSessionConfiguration(

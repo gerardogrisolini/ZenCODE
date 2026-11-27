@@ -101,6 +101,7 @@ public struct ZenStatusBar: View {
         .monospacedDigit()
         .foregroundStyle(palette.textSecondary)
         .accessibilityElement(children: .combine)
+        .padding(.horizontal, 4)
     }
 
     private func leading(now: Date) -> some View {
