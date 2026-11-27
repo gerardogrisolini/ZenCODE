@@ -467,8 +467,9 @@ There is one voice mode for the whole app, with one microphone. Every window
 shows its state in the status bar, and `/voice` in any window turns it on or
 off, pauses it, or resumes it for all of them. Voice mode follows the active
 window: the window you last brought to the front, or the last one that ran
-`/voice`. Only that window gets the dictation, reads aloud its answers and the
-comments of its main agent, announces the messages of its shared chat, and
+`/voice`. Only that window gets the dictation, reads aloud the answers and
+comments of its main agent or the live comments of its selected sub-agent tab,
+announces the messages of its shared chat, and
 sends voice mode's instruction (short sentences, brief comments while it
 works) with its prompts; the other windows get none of these.
 

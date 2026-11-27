@@ -16,6 +16,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   its border or footer divider colors.
 - macOS app: aligned the conversation transcript and composer to the same
   16-point horizontal inset, with 16 points below the composer as well.
+- macOS app: matched the sub-agent detail tab's horizontal inset to the
+  main conversation's 16 points.
+- Terminal and macOS app: while a sub-agent's detail is selected, voice mode
+  reads that agent's live comments before tool calls instead of the main
+  conversation. Switching views stops the previous reading without replaying
+  past comments.
 - Terminal: the `/subagent` and `/artifacts` panels are now modal and take the
   whole screen, as the sub-agent tabs of the macOS app do. While one is open,
   in its list and in its detail, the shared-chat dock, the input panel, and the

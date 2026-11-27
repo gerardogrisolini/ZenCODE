@@ -40,14 +40,16 @@ extension ZenWindowSession {
     /// The steps ``close()`` and ``markClosed()`` take at once, in this order
     /// and before anything suspends: the window is closed, so it writes
     /// nothing from now on; its queue is dropped; the indicator of a sidebar
-    /// load is cleared; and its shared-chat observation is stopped. Returns
-    /// the observation's detach.
+    /// load is cleared; and its shared-chat observation is stopped. Voice
+    /// mode stops reading the sub-agent tab the window showed
+    /// (``updateVoiceTabSource()``). Returns the observation's detach.
     @discardableResult
     private func closeAtOnce() -> Task<Void, Never>? {
         isClosed = true
         bringToFront = nil
         queuedLines = []
         clearSavedSessionLoad()
+        updateVoiceTabSource()
         return sharedChatObservation.stop()
     }
 

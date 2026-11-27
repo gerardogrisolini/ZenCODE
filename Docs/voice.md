@@ -81,7 +81,8 @@ which wins over the pause, and `voice paused`.
    time.
 4. The final answer of every completed turn is read aloud in full, however
    long it is, including turns started from Telegram and the coordinator turns
-   that report the results of delegated agents. Answers are read as plain
+   that report the results of delegated agents, while the main conversation
+   is the voice source. Answers are read as plain
    text: Markdown markers are dropped, links are read by their text, URLs by
    their host name, table rows cell by cell, and every code block is replaced
    by a short notice such as "Code block omitted." (in English, Italian,
@@ -102,9 +103,16 @@ tool call are read aloud as they appear, in the same way as answers, as long as
 nothing else is being read and voice mode is not asking you about a live-chat
 message; otherwise they are skipped and only shown in the terminal. The final
 answer interrupts a comment still being read, and `Esc` and `/voice pause` stop
-a comment like any other reading. The thinking of the model and the text of
-delegated agents are not read aloud; a `/plan` turn is read like any other, its
+a comment like any other reading. The thinking of the model is not read
+aloud. In the main conversation, a `/plan` turn is read like any other, its
 comments and its final answer.
+
+With voice mode on, opening a sub-agent's detail with `/subagent` in the
+terminal or selecting its tab in the macOS app switches the reading to that
+agent's new comments before tool calls, with the same rules as the main
+agent's comments. Its past comments, reasoning and final answer are not
+read. Returning to the main conversation restores its reading without
+replaying anything skipped.
 
 The instruction follows the state of voice mode when each request is made, so
 `/voice pause`, `/voice resume` and `/voice off` apply from the next prompt. No

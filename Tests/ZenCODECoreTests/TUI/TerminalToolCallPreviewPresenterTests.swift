@@ -73,7 +73,7 @@ struct TerminalToolCallPreviewPresenterTests {
         queue.finish()
         var offered: [String] = []
         for await event in queue.events {
-            if case let .voiceCommentary(text) = event {
+            if case let .voiceCommentary(text, _, _) = event {
                 offered.append(text)
             }
         }

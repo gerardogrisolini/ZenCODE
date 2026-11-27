@@ -74,7 +74,7 @@ struct ZenSubAgentTabView: View {
                 ZenTranscriptRowList(rows: rows, durations: durations)
                 ZenSubAgentLiveSlot(model: model)
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, ZenConversationScreen.contentInset)
             .padding(.top, 16)
             // Nothing sits below the tab (no composer, no status bar): the
             // margin keeps the last row clear of the window's edge and of

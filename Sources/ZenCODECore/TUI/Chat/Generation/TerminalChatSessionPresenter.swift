@@ -81,9 +81,10 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         // ``presentToolCallStarted(_:)`` does, which then finds it taken.
         if case let .toolStarted(name) = preview,
            TerminalToolCallPreviewFormatter.drawsTool(named: name) {
+            let generation = chat.voiceCommentaryGeneration
             let commentary = await chat.activeAssistantOutput?.takePending() ?? ""
             await chat.writeAssistantContent(commentary)
-            chat.offerVoiceCommentary(commentary)
+            chat.offerVoiceCommentary(commentary, generation: generation)
         }
         await chat.writeToolCallPreview(preview)
     }
@@ -93,9 +94,10 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         // The text written before a tool call is a comment on what is about
         // to happen: besides showing it, offer it to voice mode, which reads
         // it aloud when it can.
+        let generation = chat.voiceCommentaryGeneration
         let commentary = await chat.activeAssistantOutput?.takePending() ?? ""
         await chat.writeAssistantContent(commentary)
-        chat.offerVoiceCommentary(commentary)
+        chat.offerVoiceCommentary(commentary, generation: generation)
         await chat.writeToolCallStarted(toolCall)
         await chat.publishSubAgentOverviewIfChanged(relatedToolName: toolCall.name)
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
@@ -141,6 +143,7 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
     /// the baseline, records the artifacts, and publishes the overview.
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         guard let chat else { return }
+        chat.offerSubAgentVoiceCommentary(event)
         await chat.renderCoordinator.recordSubAgentToolEvent(event)
         if TerminalChat.shouldRefreshGitStatus(for: event) {
             await chat.refreshStatusBarGitStatusSummaryForFileMutation()

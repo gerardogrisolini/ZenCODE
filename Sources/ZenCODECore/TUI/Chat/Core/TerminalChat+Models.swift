@@ -109,7 +109,7 @@ enum TerminalChatRuntimeEvent: Sendable {
     /// on. The runtime loop reads it aloud only while the turn runs, nothing
     /// else is being read and no live-chat question is in progress; otherwise
     /// it is dropped and stays on screen only.
-    case voiceCommentary(String)
+    case voiceCommentary(String, agentID: String? = nil, generation: UInt64 = 0)
     /// A spoken live-chat question waited too long for its answer. The token
     /// identifies the question so a late timer cannot close a newer one.
     case voiceDialogueTimedOut(UUID)

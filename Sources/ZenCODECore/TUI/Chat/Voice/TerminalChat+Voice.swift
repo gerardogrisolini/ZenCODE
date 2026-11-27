@@ -68,13 +68,58 @@ extension TerminalChat {
     /// full queue simply drops the comment, like any other comment that cannot
     /// be read right away. Does nothing without a voice controller or an
     /// interactive panel loop, or for a blank comment.
-    func offerVoiceCommentary(_ text: String) {
-        guard voiceController != nil,
+    func offerVoiceCommentary(_ text: String, generation: UInt64? = nil) {
+        guard generation == nil || generation == voiceCommentaryGeneration,
+              voiceCommentaryAgentID == nil,
+              voiceController != nil,
               let voiceEventQueue,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
-        _ = voiceEventQueue.offer(.voiceCommentary(text))
+        _ = voiceEventQueue.offer(.voiceCommentary(text, generation: voiceCommentaryGeneration))
+    }
+
+    /// Only live tool starts of the currently selected agent enter the FIFO.
+    func offerSubAgentVoiceCommentary(_ event: DirectSubAgentToolEvent) {
+        guard case .started = event.lifecycle,
+              event.agentID == voiceCommentaryAgentID,
+              let commentary = event.commentary,
+              voiceController != nil,
+              let voiceEventQueue,
+              !commentary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        _ = voiceEventQueue.offer(.voiceCommentary(
+            commentary, agentID: event.agentID, generation: voiceCommentaryGeneration
+        ))
+    }
+
+    /// Set the source before suspending, so in-flight events see the new epoch.
+    func setVoiceCommentaryAgent(_ agentID: String?) async {
+        guard voiceCommentaryAgentID != agentID else { return }
+        voiceCommentaryAgentID = agentID
+        voiceCommentaryGeneration &+= 1
+        await voiceSession.interruptPlayback()
+    }
+
+    func deliverVoiceCommentary(
+        _ text: String, agentID: String?, generation: UInt64, isGenerating: Bool
+    ) async {
+        guard generation == voiceCommentaryGeneration,
+              agentID == voiceCommentaryAgentID else { return }
+        await voiceSession.speakCommentary(text, duringTurn: agentID != nil || isGenerating)
+        // A panel can close outside the FIFO while the voice controller is
+        // suspended. Stop a stale reading that started after that switch.
+        if generation != voiceCommentaryGeneration {
+            await voiceSession.interruptPlayback()
+        }
+    }
+
+    func voiceTurnDidEnd(finalAnswer: String?) async {
+        let generation = voiceCommentaryGeneration
+        let answer = voiceCommentaryAgentID == nil ? finalAnswer : nil
+        await voiceSession.turnDidEnd(finalAnswer: answer)
+        if answer != nil, generation != voiceCommentaryGeneration {
+            await voiceSession.interruptPlayback()
+        }
     }
 
     /// Stops the answer being read aloud, e.g. after Esc (see

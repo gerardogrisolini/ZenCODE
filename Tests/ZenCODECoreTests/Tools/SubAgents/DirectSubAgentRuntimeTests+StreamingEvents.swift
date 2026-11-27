@@ -303,6 +303,8 @@ extension DirectSubAgentRuntimeTests {
             argumentsJSON: "{}"
         )
         let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
+        await runtime.recordEvent(.content("  Inspecting "), agentID: agentID)
+        await runtime.recordEvent(.content("the file.  "), agentID: agentID)
         await runtime.recordEvent(.toolCallStarted(toolCall), agentID: agentID)
         await runtime.recordEvent(
             .toolCallCompleted(toolCall, result),
@@ -315,6 +317,8 @@ extension DirectSubAgentRuntimeTests {
         #expect(events.allSatisfy { $0.agentName == "tool-worker" })
         #expect(events.allSatisfy { $0.toolCall.id == toolCall.id })
         if events.count == 2 {
+            #expect(events[0].commentary == "Inspecting the file.")
+            #expect(events[1].commentary == nil)
             if case .started = events[0].lifecycle {
                 // Expected lifecycle.
             } else {

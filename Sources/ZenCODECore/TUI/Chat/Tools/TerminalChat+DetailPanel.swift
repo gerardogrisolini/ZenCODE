@@ -193,6 +193,10 @@ extension TerminalChat {
         session: TerminalModalSession
     ) async {
         guard let panel = detailPanel, panel.session === session else { return }
+        if case let .subAgent(controller) = panel.content {
+            await setVoiceCommentaryAgent(isChoosing ? nil : controller.agentID)
+            guard detailPanel?.session === session else { return }
+        }
         await setDetailPanelMode(
             isChoosing ? .list : .detail,
             kind: panel.kind,
@@ -237,6 +241,9 @@ extension TerminalChat {
             controller.stop()
         }
         panel.session.close()
+        if case .subAgent = panel.content {
+            await setVoiceCommentaryAgent(nil)
+        }
         // The input panel loses the panel's mode while it is still hidden, so
         // the layout comes back in one frame, already without it.
         await setDetailPanelMode(.closed, kind: panel.kind)

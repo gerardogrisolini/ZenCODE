@@ -194,7 +194,9 @@ extension TerminalChat {
         switch target {
         case let .agent(snapshot):
             await setDetailPanelMode(.detail, kind: .subAgent)
+            guard detailPanel?.session === session else { return }
             controller.open(agentID: snapshot.id, snapshot: snapshot)
+            await setVoiceCommentaryAgent(snapshot.id)
         case let .choosing(snapshots):
             await setDetailPanelMode(.list, kind: .subAgent)
             controller.open(choosing: snapshots)

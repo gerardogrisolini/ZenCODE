@@ -163,8 +163,11 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
 /// For voice mode, as the terminal's presenter, it follows the text of the main
 /// agent: the comment it writes before a tool call goes to
 /// ``voiceCommentaryHandler``, and the final answer of a turn is read from it
-/// (``finalAnswer(of:purpose:)``). The thinking is not part of it, and the
-/// delegated agents' text never reaches this presenter.
+/// (``finalAnswer(of:purpose:)``). The thinking is not part of it. The text
+/// of a delegated agent reaches it only as the comment of a tool call that
+/// starts (``DirectSubAgentToolEvent/commentary``), which goes to
+/// ``subAgentCommentaryHandler`` with the identity of its agent and of the
+/// incarnation it was written in; its replies and final answers do not.
 /// Every call returns quickly: the chat actor is shared.
 @ChatSessionActor
 final class ZenWindowPresenter: ChatSessionPresenter {
@@ -176,6 +179,9 @@ final class ZenWindowPresenter: ChatSessionPresenter {
     /// Called with the comment the main agent wrote before a tool call,
     /// never blank.
     var voiceCommentaryHandler: (@Sendable (String) -> Void)?
+    /// Called with the comment a delegated agent wrote before a tool call,
+    /// never blank.
+    var subAgentCommentaryHandler: (@Sendable (ZenSubAgentCommentary) -> Void)?
     /// The task graphs `/tasks` published (explicit overviews), oldest first,
     /// until the window takes them (``takeExplicitTaskGraphs()``).
     private(set) var explicitTaskGraphs: [ZenExplicitTaskGraph] = []
@@ -237,11 +243,34 @@ final class ZenWindowPresenter: ChatSessionPresenter {
 
     /// A delegated agent's file mutation refreshes the git summary when it
     /// completes, as the terminal's status bar does; its live artifacts reach
-    /// the window through the reducer.
+    /// the window through the reducer. The comment it wrote before a tool
+    /// call that starts goes to voice mode (``subAgentCommentaryHandler``),
+    /// as the event of the session the slot runs now: an event whose root
+    /// session is another one, because the slot moved on while it was on its
+    /// way, is not read.
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
-        guard case .completed = event.lifecycle,
-              ToolMutationClassifier.isFileMutationTool(event.toolCall.name) else { return }
-        fileMutationHandler?()
+        switch event.lifecycle {
+        case .started:
+            presentSubAgentCommentary(of: event)
+        case .completed:
+            guard ToolMutationClassifier.isFileMutationTool(event.toolCall.name) else { return }
+            fileMutationHandler?()
+        }
+    }
+
+    private func presentSubAgentCommentary(of event: DirectSubAgentToolEvent) {
+        guard let commentary = event.commentary,
+              !commentary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let sessionHost, let slotID,
+              let incarnation = sessionHost.incarnation(in: slotID),
+              event.rootSessionID.map({ $0 == incarnation.sessionID }) ?? true
+        else { return }
+        subAgentCommentaryHandler?(ZenSubAgentCommentary(
+            epoch: incarnation.epoch,
+            agentID: event.agentID,
+            toolCallID: event.toolCall.id,
+            text: commentary
+        ))
     }
 
     /// Records a graph `/tasks` published (an explicit overview), with the

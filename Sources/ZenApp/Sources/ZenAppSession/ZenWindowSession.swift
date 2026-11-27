@@ -595,6 +595,9 @@ public final class ZenWindowSession: Identifiable {
             voiceCommentary: { [weak voiceHost] commentary in
                 guard let voiceHost else { return }
                 voiceHost.post(.commentary(commentary, host: voiceHost))
+            },
+            subAgentCommentary: { [weak voiceHost] commentary in
+                voiceHost?.postSubAgentCommentary(commentary)
             }
         )
         observeSnapshots(of: current)

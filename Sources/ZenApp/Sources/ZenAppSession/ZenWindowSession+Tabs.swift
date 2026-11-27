@@ -57,7 +57,8 @@ extension ZenWindowSession {
     }
 
     /// Selects `tab` and tells every sub-agent model whether its tab is the
-    /// selected one (``ZenSubAgentTranscriptModel/isSelected``).
+    /// selected one (``ZenSubAgentTranscriptModel/isSelected``), and voice
+    /// mode what the window shows (``updateVoiceTabSource()``).
     private func setSelectedTab(_ tab: ZenWindowTab) {
         if selectedTab != tab {
             selectedTab = tab
@@ -67,6 +68,26 @@ extension ZenWindowSession {
             if model.isSelected != isSelected {
                 model.isSelected = isSelected
             }
+        }
+        updateVoiceTabSource()
+    }
+
+    /// Tells voice mode which sub-agent tab the window shows: the selected
+    /// one, while it is open, in the incarnation the window follows, and the
+    /// window is not closed; none otherwise. A change makes what voice read
+    /// for the previous source obsolete (``ZenVoiceRequest/sourceDidChange(host:)``),
+    /// and, with a tab shown, the coordinator is not read
+    /// (``ZenAppVoice``). The composer, the tab, and the shared chat are not
+    /// touched.
+    func updateVoiceTabSource() {
+        let selection: ZenVoiceTabSource.Selection?
+        if !isClosed, case let .subAgent(agentID) = selectedTab, subAgentTab(agentID) != nil {
+            selection = ZenVoiceTabSource.Selection(epoch: current.epoch, agentID: agentID)
+        } else {
+            selection = nil
+        }
+        voiceHost.tabSource.select(selection) {
+            voiceHost.post(.sourceDidChange(host: voiceHost))
         }
     }
 

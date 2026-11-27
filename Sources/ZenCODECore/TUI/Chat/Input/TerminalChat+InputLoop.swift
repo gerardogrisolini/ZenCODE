@@ -758,7 +758,7 @@ extension TerminalChat {
                 if didPresentEnding, case let .success(success) = result {
                     finalAnswer = success.finalAssistantContent
                 }
-                await voiceSession.turnDidEnd(finalAnswer: finalAnswer)
+                await voiceTurnDidEnd(finalAnswer: finalAnswer)
                 await refreshSharedChatPanelSuggestions()
                 await refreshStatusBarGitStatusSummaryAfterPromptIfNeeded()
                 // Release the room only once the queue state is final, so the
@@ -879,14 +879,10 @@ extension TerminalChat {
                 // Only the end of speech moves the dialogue on, and only when
                 // nothing newer is being read.
                 await voiceSession.speakingChanged(isSpeaking)
-            case let .voiceCommentary(commentary):
-                // A comment the root agent wrote before a tool call. It is read
-                // only while the turn runs (a late one is dropped), when
-                // nothing is being read (a new comment never queues behind or
-                // replaces a reading) and the live-chat dialogue is idle (a
-                // comment never answers, closes or delays a question). It
-                // leaves the dialogue untouched: no transition, no deadline.
-                await voiceSession.speakCommentary(commentary, duringTurn: isGenerating)
+            case let .voiceCommentary(commentary, agentID, generation):
+                await deliverVoiceCommentary(
+                    commentary, agentID: agentID, generation: generation, isGenerating: isGenerating
+                )
             case let .voiceDialogueTimedOut(token):
                 // The question lapses in silence; its message stays unread.
                 await voiceSession.answerDeadlineElapsed(token)

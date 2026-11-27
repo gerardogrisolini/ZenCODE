@@ -236,6 +236,53 @@ struct ZenVoiceWindowTests {
         }
     }
 
+    @Test("Voice follows the selected sub-agent tab without replaying old comments")
+    func commentaryFollowsTheSelectedSubAgentTab() async throws {
+        try await withVoice { runtime, _, controllers, workspace in
+            let window = try await Self.open(runtime, workspace)
+            try await Self.run("/voice on", in: window, runtime)
+            let controller = try await Self.controller(controllers)
+            let host = window.voiceHost
+            let epoch = window.current.epoch
+            let rootSessionID = window.current.sessionID
+            let tool = DirectAgentToolCall(id: "read-1", name: "local.read", argumentsObject: [:], argumentsJSON: "{}")
+            func event(_ agentID: String, _ text: String, root: String = rootSessionID) -> DirectSubAgentToolEvent {
+                DirectSubAgentToolEvent(
+                    agentID: agentID, agentName: agentID, toolCall: tool, lifecycle: .started,
+                    rootSessionID: root, commentary: text
+                )
+            }
+
+            await window.presenter.presentSubAgentToolEvent(event("a", "Before opening"))
+            window.openSubAgentTab("a")
+            let oldGeneration = host.tabSource.current.generation
+            window.openSubAgentTab("b")
+            window.selectTab(.subAgent("a"))
+            host.post(.subAgentCommentary(
+                ZenSubAgentCommentary(epoch: epoch, agentID: "a", toolCallID: "read-1", text: "Old selection"),
+                generation: oldGeneration, host: host
+            ))
+            await window.presenter.presentSubAgentToolEvent(event("b", "Hidden tab"))
+            await window.presenter.presentSubAgentToolEvent(event("a", "Old session", root: "other-session"))
+            host.post(.turnStarted(host: host))
+            host.post(.commentary("Coordinator comment", host: host))
+            host.post(.turnEnded(finalAnswer: "Coordinator answer", host: host))
+            await window.presenter.presentSubAgentToolEvent(event("a", "Selected tab"))
+            await runtime.waitForVoice()
+            #expect(await controller.spokenTexts == ["Selected tab"])
+
+            let interruptions = await controller.interruptions
+            window.selectTab(.chat)
+            await runtime.waitForVoice()
+            #expect(await controller.interruptions == interruptions + 1)
+            await window.presenter.presentSubAgentToolEvent(event("a", "After closing"))
+            host.post(.turnStarted(host: host))
+            host.post(.turnEnded(finalAnswer: "Back in chat", host: host))
+            await runtime.waitForVoice()
+            #expect(await controller.spokenTexts == ["Selected tab", "Back in chat"])
+        }
+    }
+
     @Test("A /plan turn reads the Planner's response aloud, not the coordinator's own text")
     func planTurnReadsThePlannerResponse() async throws {
         try await withVoice { runtime, backend, controllers, workspace in

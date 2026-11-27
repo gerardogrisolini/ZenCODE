@@ -71,10 +71,12 @@ enum ZenWindowSteps {
         fileMutation: @escaping @Sendable () -> Void,
         statusFacts: @escaping @Sendable () -> Void,
         savedSessionLoadStep: @escaping @Sendable (ZenSavedSessionLoadStep) -> Void,
-        voiceCommentary: @escaping @Sendable (String) -> Void
+        voiceCommentary: @escaping @Sendable (String) -> Void,
+        subAgentCommentary: @escaping @Sendable (ZenSubAgentCommentary) -> Void
     ) {
         presenter.fileMutationHandler = fileMutation
         presenter.voiceCommentaryHandler = voiceCommentary
+        presenter.subAgentCommentaryHandler = subAgentCommentary
         hooks.statusFactsHandler = statusFacts
         hooks.savedSessionLoadStepHandler = savedSessionLoadStep
     }

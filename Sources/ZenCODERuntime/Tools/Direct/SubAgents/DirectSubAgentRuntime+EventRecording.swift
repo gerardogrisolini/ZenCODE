@@ -117,7 +117,8 @@ extension DirectSubAgentRuntime {
                 agentName: agent.name,
                 toolCall: toolCall,
                 lifecycle: .started,
-                rootSessionID: agent.rootSessionID
+                rootSessionID: agent.rootSessionID,
+                commentary: agent.currentActivity
             )
         case let .toolCallCompleted(toolCall, result):
             // Keep the compatibility snapshot projection until the next model

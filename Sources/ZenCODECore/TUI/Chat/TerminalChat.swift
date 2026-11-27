@@ -163,6 +163,9 @@ public final class TerminalChat {
     /// open. Transient: it lasts only while the panel is shown and is never
     /// saved.
     var detailPanel: TerminalDetailPanel?
+    /// Current spoken source and epoch; invalidates queued commentary on every switch.
+    var voiceCommentaryAgentID: String?
+    var voiceCommentaryGeneration: UInt64 = 0
     /// `true` while ``openDetailPanel(_:on:)`` runs: from its start, across
     /// the suspensions before ``detailPanel`` is set, to its end.
     var isOpeningDetailPanel = false

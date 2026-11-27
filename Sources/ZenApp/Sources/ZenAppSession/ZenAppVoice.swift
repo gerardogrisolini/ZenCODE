@@ -35,9 +35,19 @@ enum ZenVoiceRequest: Sendable {
     /// The text the main agent wrote before a tool call of the window's
     /// turn.
     case commentary(String, host: ZenWindowVoiceHost)
+    /// The comment a delegated agent wrote before a tool call, while its tab
+    /// was the one the window showed: `generation` is the tab source's when
+    /// it was presented (``ZenVoiceTabSource``), so a request that a later
+    /// change of the tab made stale is dropped, also one that went back to
+    /// the same tab.
+    case subAgentCommentary(ZenSubAgentCommentary, generation: UInt64, host: ZenWindowVoiceHost)
     /// The window's turn ended, with the answer to read (`nil` when it
     /// failed or was stopped).
     case turnEnded(finalAnswer: String?, host: ZenWindowVoiceHost)
+    /// What the window shows changed: another sub-agent tab or the
+    /// conversation was selected, a tab closed, the session was replaced, or
+    /// the window closed. A reading of the previous source stops.
+    case sourceDidChange(host: ZenWindowVoiceHost)
     /// Esc in the window, while voice reads or a line runs.
     case interruptPlayback(host: ZenWindowVoiceHost)
     /// An edit of a window's draft ended the dictation it showed, through
@@ -131,6 +141,15 @@ final class ZenVoiceRequestSink: Sendable {
 /// (``ZenWindowVoiceHost/turnInstruction()``). What another window reports is
 /// dropped, except a recognized utterance it already took from its draft,
 /// which goes back there as ordinary text.
+///
+/// What is read in a window depends on what it shows (``ZenVoiceTabSource``).
+/// With the conversation shown, the comments and the final answers of the
+/// coordinator are read. With a sub-agent tab shown, the comments of that
+/// agent are read as it writes them, whatever the coordinator's turn does,
+/// and the coordinator's are not (the turn is still counted, and the
+/// live-chat dialogue goes on); nothing is read again once the conversation
+/// is shown again. A change of what the window shows stops the reading, as
+/// Esc does, and drops the requests the change made stale.
 @ChatSessionActor
 final class ZenAppVoice {
     let session: VoiceModeSession
@@ -196,12 +215,31 @@ final class ZenAppVoice {
         case let .turnStarted(host):
             host.runningTurns += 1
         case let .commentary(text, host):
-            guard isActive(host) else { return }
+            // With a sub-agent tab shown the coordinator is not read: its
+            // comment stays on screen only.
+            guard isActive(host), !host.tabSource.isDetailSelected else { return }
             await session.speakCommentary(text, duringTurn: host.isTurnRunning)
+        case let .subAgentCommentary(commentary, generation, host):
+            // Stale once what the window shows changed since it was
+            // presented, even if it shows the same tab again. The agent works
+            // by itself: its comment is read whether or not a turn of the
+            // coordinator runs.
+            guard isActive(host), host.tabSource.admits(generation: generation) else { return }
+            await session.speakCommentary(commentary.text, duringTurn: true)
         case let .turnEnded(finalAnswer, host):
             host.runningTurns = max(0, host.runningTurns - 1)
             guard isActive(host) else { return }
-            await session.turnDidEnd(finalAnswer: finalAnswer)
+            // The turn ends either way, and the live-chat dialogue goes on;
+            // only the answer is not read while a sub-agent tab is shown, and
+            // not later either.
+            let answer = host.tabSource.isDetailSelected ? nil : finalAnswer
+            await session.turnDidEnd(finalAnswer: answer)
+        case let .sourceDidChange(host):
+            // The reading of the source the window showed before is obsolete:
+            // it stops as after Esc, whatever it was. What comes after is not
+            // touched: the announcements of the room still come as they did.
+            guard isActive(host) else { return }
+            await session.interruptPlayback()
         case let .interruptPlayback(host):
             guard isActive(host) else { return }
             await session.interruptPlayback()
@@ -268,6 +306,9 @@ final class ZenWindowVoiceHost: VoiceModeSessionHost {
     nonisolated let windowID: UUID
     nonisolated let window = ZenWeakWindow()
     nonisolated let sink: ZenVoiceRequestSink
+    /// What the window shows, for what voice reads: written by the window,
+    /// read by the chat actor and the voice context.
+    nonisolated let tabSource = ZenVoiceTabSource()
     private weak var voice: ZenAppVoice?
     /// The turns of the window that run, as the voice context last heard
     /// (``ZenVoiceRequest/turnStarted(host:)``): a comment is read only
@@ -287,6 +328,15 @@ final class ZenWindowVoiceHost: VoiceModeSessionHost {
     /// Posts `request` into the app's voice context, without waiting.
     nonisolated func post(_ request: ZenVoiceRequest) {
         sink.post(request)
+    }
+
+    /// Offers the comment a delegated agent wrote before a tool call to the
+    /// app's voice context, without waiting, stamped with what the window
+    /// shows now. Nothing is posted unless the agent's tab, in the
+    /// incarnation the comment was written in, is the one shown.
+    nonisolated func postSubAgentCommentary(_ commentary: ZenSubAgentCommentary) {
+        guard let generation = tabSource.generation(admitting: commentary) else { return }
+        post(.subAgentCommentary(commentary, generation: generation, host: self))
     }
 
     /// The instruction that goes out with a prompt of the window: voice
