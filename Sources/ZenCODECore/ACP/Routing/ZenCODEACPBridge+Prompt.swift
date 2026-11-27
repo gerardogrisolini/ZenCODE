@@ -22,19 +22,19 @@ struct ACPPromptTurn: Sendable {
 /// The request of a prompt turn, parsed.
 private struct ACPPreparedPrompt {
     let attachments: [AgentRuntimeAttachment]
-    /// The prompt text without the agent mention it may start with.
-    let routedPromptText: String
+    /// The eligible operator input, without a resolved agent mention.
+    let operatorLine: String?
+    /// The rendered prompt for an ordinary turn, with all of its context.
+    let normalPrompt: String
     /// The text the turn presents as the user's message.
     let visiblePromptText: String
-    let coordinatorCommand: CoordinatorCommand?
-    let isWorkspaceCommand: Bool
+    /// The coordinator line with context appended as a free-form argument,
+    /// when the operator explicitly started such a command.
+    let coordinatorLine: String?
     /// The agent the prompt's leading mention routes the session to, applied
     /// only once the slot admits the line (see ``routeACPCommandTurn``).
     let agentMention: AgentProfile?
-    let hasAgentMention: Bool
-    /// The context the client sent around a command or an agent mention typed
-    /// in its own block, which a turn that generates passes to the model before
-    /// its prompt; `nil` when the turn routes the whole rendered prompt.
+    /// Context not already included in a coordinator command's argument.
     let editorContext: String?
     /// The context blocks Xcode sent, as the rendered prompt holds them (see
     /// ``ZenCODEACPBridge/xcodeContextBlocks(in:)``): a saved session presents
@@ -79,6 +79,17 @@ extension ZenCODEACPBridge {
         let promptHandlerToken = enterPromptHandler(sessionID: sessionID)
         defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
 
+        do {
+            try await handlePrompt(id: id, params: params, session: knownSession, token: promptHandlerToken)
+        } catch is CancellationError {
+            await sendStopReason(id: id, "cancelled")
+        }
+    }
+
+    private func handlePrompt(
+        id: JSONValue?, params: [String: Any], session knownSession: SessionState, token: UUID
+    ) async throws {
+        let sessionID = knownSession.id
         // A new session may still be offering the task graphs earlier
         // sessions left incomplete: the prompt waits for the operator's
         // answer, so it runs on the graph resumed. A close that cancelled the
@@ -88,10 +99,9 @@ extension ZenCODEACPBridge {
         guard try await waitForResumableTaskGraphOffer(
             sessionID: sessionID,
             epoch: knownSession.epoch,
-            promptHandlerToken: promptHandlerToken
+            promptHandlerToken: token
         ) else {
-            await sendStopReason(id: id, "cancelled")
-            return
+            throw CancellationError()
         }
 
         // Reserve the session in the host, which checks and reserves in one
@@ -108,7 +118,17 @@ extension ZenCODEACPBridge {
                 busyMessage: await promptBusyMessage(slotID: knownSession.slotID)
             )
         } catch {
-            throw acpError(for: error, busyMessage: "A prompt is already running for this session.")
+            try ensureNotShutDown()
+            let response = acpError(for: error, busyMessage: "A prompt is already running for this session.")
+            // A close may retire the slot before the host serves the reserve.
+            // No turn was reserved: keep the unknown-session error, but write
+            // it while the close is still waiting for this handler to drain.
+            if liveSession(id: sessionID, epoch: knownSession.epoch) == nil,
+               let response = response as? ACPError {
+                await writer.sendErrorIfRequest(id: id, code: response.code, message: response.message)
+                return
+            }
+            throw response
         }
         let promptID = reservation.promptID
         let epoch = reservation.epoch
@@ -119,9 +139,7 @@ extension ZenCODEACPBridge {
         // (silently after a shutdown).
         guard let session = liveSession(id: sessionID, epoch: epoch) else {
             await host.releasePrompt(reservation)
-            try ensureNotShutDown()
-            await sendStopReason(id: id, "cancelled")
-            return
+            throw CancellationError()
         }
         var didReleaseReservation = false
         /// Releases the reservation only when it is still ours and the session
@@ -167,6 +185,7 @@ extension ZenCODEACPBridge {
     }
 
     private func sendStopReason(id: JSONValue?, _ reason: String) async {
+        guard !isShutDown else { return }
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: ["stopReason": reason]))
     }
 
@@ -175,11 +194,10 @@ extension ZenCODEACPBridge {
     /// (the echo of the prompt and the command it carries), execute (the
     /// turn's task on the model and its presentation), and settle.
     ///
-    /// Every exit that answers a stop reason goes through `finish`: the
-    /// reply first, then the reservation. A failed turn releases the
-    /// reservation before its error becomes the reply; a turn that is
-    /// cancelled before its task runs throws, and `prompt` releases the
-    /// reservation before the request answers `cancelled`.
+    /// A completed turn answers before releasing its reservation. An error or
+    /// an early cancellation unwinds through `handlePrompt` first, releasing
+    /// the reservation. Either kind of cancellation answers in `prompt`,
+    /// before its drain token is released.
     private func runPrompt(
         id: JSONValue?,
         params: [String: Any],
@@ -242,34 +260,51 @@ extension ZenCODEACPBridge {
             cwd: session.cwd
         )
         let attachments = await Self.readAttachments(of: attachmentPlan)
-        // Only commands, and agent mentions after Xcode's context, use the
-        // operator's separate input (see `routedPromptSource(from:)`). Regular
-        // turns still echo and send the entire rendered prompt to the model.
-        let commandSource = try routedPromptSource(from: promptBlocks)
-        let promptText = commandSource?.text ?? rawPromptText
-        let editorContext = commandSource.flatMap { Self.editorContext(around: $0, in: promptBlocks) }
+        // The rendered prompt is model input, never a fallback command line.
+        let source = Self.commandSource(from: promptBlocks)
+        let mention = try source.flatMap { try resolveLeadingACPAgentMention(in: $0.text) }
+        let operatorLine = mention?.prompt ?? source?.text
+        let coordinatorCommand = operatorLine.flatMap(CoordinatorCommandParser.parse)
+        var editorContext = source.flatMap { Self.editorContext(around: $0, in: promptBlocks) }
+        var coordinatorLine: String?
+        let takesArgumentContext = switch coordinatorCommand {
+        case let .goal(goal): !goal.isEmpty
+        case .review, .plan(.start): true
+        default: false
+        }
+        if takesArgumentContext, source?.followsXcodeContext == false, let operatorLine, let editorContextText = editorContext {
+            // Preserve explicit scopes/goals accompanied by a resource.
+            // Never append context to a subcommand or use it to select one.
+            coordinatorLine = operatorLine + "\n\n" + editorContextText
+            editorContext = nil
+        }
+
+        var normalPrompt = rawPromptText
+        if let source, let mention {
+            var modelBlocks = promptBlocks
+            modelBlocks[source.blockIndex] = mention.prompt
+            normalPrompt = PromptContentFormatter.renderPromptText(from: modelBlocks)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let xcodeContextBlocks = Self.xcodeContextBlocks(in: promptBlocks)
-        let agentMentionResolution = try resolveLeadingACPAgentMention(in: promptText)
-        let routedPromptText = agentMentionResolution?.prompt ?? promptText
-        guard !routedPromptText.isEmpty || !attachments.isEmpty else {
+        guard !normalPrompt.isEmpty || !attachments.isEmpty else {
             throw ACPError.invalidParams("session/prompt requires prompt text or attachments.")
         }
 
-        let coordinatorCommand = CoordinatorCommandParser.parse(routedPromptText)
-        let isWorkspaceCommand = (Self.commandSource(from: promptBlocks)?.text == promptText)
-            && Self.isWorkspaceCommand(routedPromptText)
-        let isPlanningReply = coordinatorCommand == nil
-            && agentMentionResolution == nil
-            && !CoordinatorCommandParser.isSlashCommand(routedPromptText)
-            && session.controller.commandState.planBrainstorming?.isAwaitingReply == true
         // Commands remain visible exactly as the client sent them (including an
-        // optional leading agent mention); only their hidden operational prompt
-        // is substituted before generation. A prompt that carries Xcode's
-        // context is presented as the operator typed it: the context is what
-        // the model reads, not what the client's echo and title show.
-        let visibleSource = coordinatorCommand != nil || isPlanningReply
-            ? promptText
-            : routedPromptText
+        // optional leading agent mention for coordinator commands). Xcode's
+        // context is what the model reads, not what the echo and title show.
+        let visibleSource: String
+        if let source, coordinatorCommand != nil {
+            visibleSource = source.followsXcodeContext ? source.text : rawPromptText
+        } else if let operatorLine,
+                  let token = ChatCommandRegistry.commandToken(from: operatorLine),
+                  token == Self.tasksCommandToken || token == Self.telegramCommandToken
+                    || Self.isWorkspaceCommand(operatorLine) {
+            visibleSource = operatorLine
+        } else {
+            visibleSource = normalPrompt
+        }
         let displayedSource = Self.promptDisplayText(
             of: visibleSource,
             removingXcodeContext: xcodeContextBlocks
@@ -279,12 +314,11 @@ extension ZenCODEACPBridge {
             : displayedSource
         return ACPPreparedPrompt(
             attachments: attachments,
-            routedPromptText: routedPromptText,
+            operatorLine: operatorLine,
+            normalPrompt: normalPrompt,
             visiblePromptText: visiblePromptText,
-            coordinatorCommand: coordinatorCommand,
-            isWorkspaceCommand: isWorkspaceCommand,
-            agentMention: agentMentionResolution?.agent,
-            hasAgentMention: agentMentionResolution != nil,
+            coordinatorLine: coordinatorLine,
+            agentMention: mention?.agent,
             editorContext: editorContext,
             xcodeContextBlocks: xcodeContextBlocks
         )
@@ -299,23 +333,16 @@ extension ZenCODEACPBridge {
         await sendUserMessageChunk(sessionID: turn.sessionID, text: prepared.visiblePromptText)
         await sendSessionInfoUpdate(sessionID: turn.sessionID, title: promptTitle(from: prepared.visiblePromptText))
 
-        let commandRoute: ACPCommandTurnRoute
-        do {
-            commandRoute = try await routeACPCommandTurn(
-                command: prepared.coordinatorCommand,
-                routedPromptText: prepared.routedPromptText,
-                isWorkspaceCommand: prepared.isWorkspaceCommand,
-                agentMention: prepared.agentMention,
-                hasAgentMention: prepared.hasAgentMention,
-                sessionID: turn.sessionID,
-                epoch: turn.epoch,
-                promptID: turn.promptID
-            )
-        } catch is CancellationError {
-            return .finished(stopReason: "cancelled")
-        }
+        let commandRoute = try await routeACPCommandTurn(
+            operatorLine: prepared.operatorLine,
+            normalPrompt: prepared.normalPrompt,
+            coordinatorLine: prepared.coordinatorLine,
+            editorContext: prepared.editorContext,
+            agentMention: prepared.agentMention,
+            turn: turn
+        )
         guard await reservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) != nil else {
-            return .finished(stopReason: "cancelled")
+            throw CancellationError()
         }
         switch commandRoute {
         case let .immediate(message):
@@ -324,11 +351,10 @@ extension ZenCODEACPBridge {
                 update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: message)
             )
             return .finished(stopReason: "end_turn")
-        case let .generate(prompt, purpose, prelude):
+        case let .generate(modelPrompt, purpose, prelude):
             // The prompt the model gets and the history records. A session saved
             // by itself presents it without the context Xcode sent (see
             // `ZenCODEACPBridge+SessionPersistence.swift`).
-            let modelPrompt = Self.modelPrompt(prompt, editorContext: prepared.editorContext)
             let displayText = Self.promptDisplayText(
                 of: modelPrompt,
                 removingXcodeContext: prepared.xcodeContextBlocks

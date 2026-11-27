@@ -37,6 +37,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- macOS app: aligned the composer's status line with the attachment button
+  instead of the text field.
+- ACP: cancelling a permission request takes precedence over any conflicting
+  selection in the client reply. An invalid client error code no longer
+  interrupts the session.
+- ACP: slash commands and `@Agent` mentions are routed only from the operator's
+  text, not from attached resources or assistant-only context.
+- ACP: a cancelled prompt can no longer invalidate a later turn's command
+  fence. `session/close` waits for the cancelled prompt's reply before
+  answering.
 - ACP: a `session/load` or `session/resume` of a session id the process does not
   hold claims the id before it suspends. A second request for the same id while
   the first is still opening it answers `-32602` instead of opening a second

@@ -127,12 +127,10 @@ struct ACPConsentHost: ChatInteractionHost {
     /// The selected option ID of a permission reply, or `nil` when the reply
     /// names none (a cancellation among them).
     static func permissionOptionID(from result: JSONValue?) -> String? {
-        guard let object = result?.objectValue else {
-            return result?.acpStringValue
+        if case let .option(optionID) = permissionOutcome(from: result) {
+            return optionID
         }
-        return selectedOptionID(in: object)
-            ?? object["outcome"]?.objectValue.flatMap { selectedOptionID(in: $0) }
-            ?? object["selected"]?.objectValue.flatMap { selectedOptionID(in: $0) }
+        return nil
     }
 
     /// What a permission reply says: the option the operator chose, an explicit
@@ -149,11 +147,8 @@ struct ACPConsentHost: ChatInteractionHost {
     /// from a reply that names no option: the first is the operator dismissing
     /// the request, the second is a reply the agent cannot trust.
     static func permissionOutcome(from result: JSONValue?) -> PermissionOutcome {
-        if let optionID = permissionOptionID(from: result) {
-            return .option(optionID)
-        }
         guard let object = result?.objectValue else {
-            return .unknown
+            return result?.acpStringValue.map { .option($0) } ?? .unknown
         }
         // Cancellation wins over contradictory legacy selection fields.
         let outcomes = [
@@ -163,6 +158,11 @@ struct ACPConsentHost: ChatInteractionHost {
         ]
         if outcomes.contains(where: { $0?.acpStringValue == "cancelled" }) {
             return .cancelled
+        }
+        if let optionID = selectedOptionID(in: object)
+            ?? object["outcome"]?.objectValue.flatMap({ selectedOptionID(in: $0) })
+            ?? object["selected"]?.objectValue.flatMap({ selectedOptionID(in: $0) }) {
+            return .option(optionID)
         }
         return .unknown
     }

@@ -237,6 +237,11 @@ extension ZenCODEACPBridge {
     fileprivate func promptExitHasActivePromptTask(sessionID: String) -> Bool {
         sessions[sessionID]?.activePromptTask != nil
     }
+
+    fileprivate func promptExitSlot(sessionID: String) -> (ChatSessionHost, ChatSlotID, ChatSessionController)? {
+        guard let session = sessions[sessionID] else { return nil }
+        return (host, session.slotID, session.controller)
+    }
 }
 
 @Suite(.timeLimit(.minutes(1)))
@@ -380,6 +385,48 @@ struct ACPPromptTurnExitCharacterizationTests {
         #expect(fixture.transport.replies(to: 50).count == 1)
         #expect(await fixture.backend.prompts == ["warm up"])
         await Self.expectSessionAcceptsANewPrompt(fixture, id: 3)
+        await fixture.bridge.shutdown()
+    }
+
+    @Test
+    func aCancelledEchoCannotReplaceTheNextOwnersFenceAndRepliesWhileTracked() async throws {
+        let fixture = try await Self.makeFixture()
+        let (host, slotID, controller) = try #require(await fixture.bridge.promptExitSlot(sessionID: fixture.sessionID))
+        let echo = fixture.transport.holdWriter { message in
+            message.objectValue?["params"]?.objectValue?["update"]?.objectValue?["sessionUpdate"]
+                == .string("user_message_chunk")
+        }
+        let prompt = Task { await Self.send(fixture, id: 2, text: "/tasks") }
+        await echo.reached.wait()
+        defer { echo.release.signal() }
+        let tokens = await fixture.bridge.promptHandlerTokensSnapshot(sessionID: fixture.sessionID)
+        #expect(tokens.count == 1)
+
+        // The writer is still pinned on A's echo, so use the owner's cancel
+        // primitive directly. B holds both the replacement reservation and
+        // its real controller fence before A can try to route.
+        let oldPromptID = await host.activePromptID(in: slotID)
+        #expect(oldPromptID != nil)
+        #expect(await host.cancelPrompt(in: slotID) == oldPromptID)
+        let replacement = try await host.reservePrompt(in: slotID)
+        let fence = try #require(await host.beginPromptCommandFence(replacement))
+        let reply = fixture.transport.holdWriter { PromptExitTransport.isReply($0, to: 2) }
+        echo.release.signal()
+        await reply.reached.wait()
+        defer { reply.release.signal() }
+
+        #expect(controller.isCurrent(fence))
+        #expect(await host.holdsPrompt(replacement))
+        #expect(await fixture.bridge.promptHandlerTokensSnapshot(sessionID: fixture.sessionID) == tokens)
+        #expect(fixture.transport.replies(to: 2).map(PromptExitTransport.describeReply) == ["stopReason: cancelled"])
+        reply.release.signal()
+        await prompt.value
+
+        #expect(await fixture.bridge.promptHandlerTokensSnapshot(sessionID: fixture.sessionID).isEmpty)
+        #expect(controller.isCurrent(fence))
+        controller.endCommandFence(fence)
+        #expect(await host.releasePrompt(replacement))
+        #expect(await fixture.backend.prompts == ["warm up"])
         await fixture.bridge.shutdown()
     }
 

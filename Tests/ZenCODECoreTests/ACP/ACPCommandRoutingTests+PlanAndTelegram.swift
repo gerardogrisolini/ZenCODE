@@ -549,14 +549,10 @@ extension ZenCODEACPBridge {
         let route: ACPCommandTurnRoute
         do {
             route = try await routeACPCommandTurn(
-                command: CoordinatorCommandParser.parse(prompt),
-                routedPromptText: prompt,
-                isWorkspaceCommand: Self.isWorkspaceCommand(prompt),
+                operatorLine: prompt,
+                normalPrompt: prompt,
                 agentMention: agentMention,
-                hasAgentMention: agentMention != nil,
-                sessionID: sessionID,
-                epoch: reservation.epoch,
-                promptID: reservation.promptID
+                turn: ACPPromptTurn(requestID: nil, sessionID: sessionID, epoch: reservation.epoch, promptID: reservation.promptID)
             )
         } catch {
             await host.releasePrompt(reservation)

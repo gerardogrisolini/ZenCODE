@@ -75,6 +75,19 @@ extension ChatSessionHost {
         reservedIncarnation(reservation) != nil
     }
 
+    /// Takes a command fence only for the current owner of the prompt. A
+    /// cancel that cleared the reservation cannot be followed by a late
+    /// command of that prompt replacing its successor's fence.
+    package func beginPromptCommandFence(_ reservation: ChatPromptReservation) -> ChatCommandFence? {
+        guard let incarnation = reservedIncarnation(reservation),
+              incarnation.sessionID == reservation.sessionID else { return nil }
+        // Retirement can be announced off the host actor. Serialize with
+        // that announcement too, so a draining prompt cannot revive a fence.
+        return retirement.withOpenSlot(reservation.slotID) {
+            incarnation.controller.beginCommandFence(sessionID: incarnation.sessionID)
+        }
+    }
+
     /// Runs `body` with the incarnation only while `reservation` holds, in
     /// the same step as the check, and returns its result; `nil` otherwise,
     /// without running `body`.
@@ -236,8 +249,8 @@ extension ChatSessionHost {
     /// actor calls it in the same step in which it stops knowing the session,
     /// before its first suspension.
     package nonisolated func retireIncarnation(in slotID: ChatSlotID, controller: ChatSessionController) {
-        controller.cancelActiveTurn()
         retirement.retire(slotID)
+        controller.cancelActiveTurn()
     }
 
     /// Announces ``shutdown()`` to a channel that shuts the host down only
@@ -273,6 +286,13 @@ final class ChatSlotRetirement: Sendable {
     /// Whether `slotID` was retired and not closed yet.
     func isRetired(_ slotID: ChatSlotID) -> Bool {
         state.withLock { $0.retiredSlotIDs.contains(slotID) }
+    }
+
+    func withOpenSlot<Result>(_ slotID: ChatSlotID, _ body: () -> Result) -> Result? {
+        state.withLock { state in
+            guard !state.isShuttingDown, !state.retiredSlotIDs.contains(slotID) else { return nil }
+            return body()
+        }
     }
 
     func retire(_ slotID: ChatSlotID) {

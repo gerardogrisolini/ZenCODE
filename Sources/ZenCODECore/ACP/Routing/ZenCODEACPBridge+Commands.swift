@@ -23,6 +23,15 @@ enum ACPCommandPromptPurpose: Sendable {
 enum ACPCommandTurnRoute: Sendable {
     case generate(prompt: String, purpose: ACPCommandPromptPurpose, prelude: String? = nil)
     case immediate(String)
+
+    fileprivate func addingEditorContext(_ editorContext: String?) -> Self {
+        guard case let .generate(prompt, purpose, prelude) = self else { return self }
+        return .generate(
+            prompt: ZenCODEACPBridge.modelPrompt(prompt, editorContext: editorContext),
+            purpose: purpose,
+            prelude: prelude
+        )
+    }
 }
 
 enum ACPPlanningCommandError: LocalizedError {
@@ -72,8 +81,8 @@ enum ACPCommandNoticeContext: Sendable {
 /// of a restored `/goal` workflow before a reply, the refresh of the session
 /// after `/plan load`, and its wording (``acpText(for:context:)``).
 ///
-/// The fence is the controller's turn token, taken in the same synchronous
-/// step that checks the prompt's reservation. `session/cancel`,
+/// The fence is the controller's turn token, taken on the host in the same
+/// synchronous step that checks the prompt's reservation. `session/cancel`,
 /// `session/close`, and shutdown, the only operations that drop the
 /// reservation, clear it (``ChatSessionController/cancelActiveTurn(armingWorkflowRecovery:)``),
 /// so the operations check and write their state under the controller's lock
@@ -83,40 +92,35 @@ enum ACPCommandNoticeContext: Sendable {
 /// reservation again after routing.
 extension ZenCODEACPBridge {
     func routeACPCommandTurn(
-        command: CoordinatorCommand?,
-        routedPromptText: String,
-        isWorkspaceCommand: Bool,
+        operatorLine: String?,
+        normalPrompt: String,
+        coordinatorLine: String? = nil,
+        editorContext: String? = nil,
         agentMention: AgentProfile?,
-        hasAgentMention: Bool,
-        sessionID: String,
-        epoch: UInt64,
-        promptID: UUID
+        turn: ACPPromptTurn
     ) async throws -> ACPCommandTurnRoute {
-        // The fence is the controller's turn token, and it is taken in the same
-        // synchronous step that checks the bridge's own liveness, before the
-        // hop to the host: a `session/cancel` that lands after that hop must
-        // invalidate a command that has not run yet. The host reservation is
-        // what proves the turn still owns the session after the hop, and every
-        // write the commands make goes through the fence.
-        guard let controller = liveSession(id: sessionID, epoch: epoch)?.controller else {
+        let (sessionID, epoch, promptID) = (turn.sessionID, turn.epoch, turn.promptID)
+        guard let reservedSession = liveSession(id: sessionID, epoch: epoch) else {
             throw CancellationError()
         }
-        let fence = controller.beginCommandFence(sessionID: sessionID)
+        let controller = reservedSession.controller
+        guard let fence = await host.beginPromptCommandFence(reservedSession.promptReservation(promptID)) else {
+            throw CancellationError()
+        }
         defer { controller.endCommandFence(fence) }
-        guard var session = await reservedPromptSession(
-            sessionID: sessionID,
-            epoch: epoch,
-            promptID: promptID
-        ) else {
-            throw CancellationError()
-        }
 
         // While Telegram drives the slot the editor runs only what takes it
         // back (see `ChatSessionHost.admitLine`); every other line is
-        // answered with the refusal and runs nothing.
-        if case let .refused(text) = await host.admitLine(routedPromptText, in: session.slotID) {
+        // answered with the refusal and runs nothing. Context cannot take
+        // the slot back on the operator's behalf.
+        let admission = await host.admitLine(operatorLine ?? "", in: reservedSession.slotID)
+        guard var session = liveSession(id: sessionID, epoch: epoch), controller.isCurrent(fence) else {
+            throw CancellationError()
+        }
+        if case let .refused(text) = admission {
             return .immediate(Self.acpImmediateText(text))
         }
+        guard let operatorLine else { return .generate(prompt: normalPrompt, purpose: .normal) }
 
         // Only now that the slot admitted the line: a refused line must not
         // route the session to another agent. The mention keeps the same
@@ -139,9 +143,9 @@ extension ZenCODEACPBridge {
 
         // `/telegram` is not a coordinator command: it is answered here, at
         // once, and never reaches the model (see `routeACPTelegramCommand`).
-        if ChatCommandRegistry.commandToken(from: routedPromptText) == Self.telegramCommandToken {
+        if ChatCommandRegistry.commandToken(from: operatorLine) == Self.telegramCommandToken {
             return try await routeACPTelegramCommand(
-                routedPromptText,
+                operatorLine,
                 sessionID: sessionID,
                 epoch: epoch,
                 promptID: promptID
@@ -151,9 +155,9 @@ extension ZenCODEACPBridge {
         // `/tasks` is not a coordinator command either: it is answered here,
         // with the graph the terminal and Telegram show and the plan update of
         // the client's Tasks section (see `routeACPTasksCommand`).
-        if ChatCommandRegistry.commandToken(from: routedPromptText) == Self.tasksCommandToken {
+        if ChatCommandRegistry.commandToken(from: operatorLine) == Self.tasksCommandToken {
             return try await routeACPTasksCommand(
-                routedPromptText,
+                operatorLine,
                 sessionID: sessionID,
                 epoch: epoch,
                 promptID: promptID,
@@ -164,9 +168,9 @@ extension ZenCODEACPBridge {
         // `/changes` and `/undo` are not coordinator commands either: they are
         // answered here, with the file changes of the last turn, and never reach
         // the model (see `routeACPWorkspaceCommand`).
-        if isWorkspaceCommand {
+        if Self.isWorkspaceCommand(operatorLine) {
             return try await routeACPWorkspaceCommand(
-                routedPromptText,
+                operatorLine,
                 sessionID: sessionID,
                 epoch: epoch,
                 promptID: promptID,
@@ -174,23 +178,25 @@ extension ZenCODEACPBridge {
             )
         }
 
-        guard let command else {
-            guard !hasAgentMention,
-                  !CoordinatorCommandParser.isSlashCommand(routedPromptText) else {
-                return .generate(prompt: routedPromptText, purpose: .normal)
+        guard let command = CoordinatorCommandParser.parse(operatorLine) else {
+            guard agentMention == nil, !CoordinatorCommandParser.isSlashCommand(operatorLine) else {
+                return .generate(prompt: normalPrompt, purpose: .normal)
             }
-            return try await routeACPPendingReply(
-                routedPromptText,
+            let reply = try await routeACPPendingReply(
+                operatorLine,
                 session: session,
                 fence: fence,
                 policy: policy
             )
+            return reply?.addingEditorContext(editorContext) ?? .generate(prompt: normalPrompt, purpose: .normal)
         }
 
+        let commandLine = coordinatorLine ?? operatorLine
         switch command {
         case .goal:
-            let outcome = await controller.runGoalCommand(line: routedPromptText, fence: fence)
+            let outcome = await controller.runGoalCommand(line: commandLine, fence: fence)
             return try acpRoute(for: outcome, context: .goal, controller: controller, fence: fence)
+                .addingEditorContext(editorContext)
         case .review:
             guard acpSubAgentsAreAvailable(in: session) else {
                 return .immediate("ZenCODE: /review requires the sub-agent tools in this ACP session.")
@@ -201,11 +207,12 @@ extension ZenCODEACPBridge {
                 return .immediate("ZenCODE: \(error.localizedDescription)")
             }
             let outcome = await controller.runReviewCommand(
-                line: routedPromptText,
+                line: commandLine,
                 fence: fence,
                 policy: policy
             )
             return try acpRoute(for: outcome, context: .review, controller: controller, fence: fence)
+                .addingEditorContext(editorContext)
         case let .plan(action):
             if case .start = action {
                 guard acpSubAgentsAreAvailable(in: session, requiresMessaging: true) else {
@@ -215,7 +222,7 @@ extension ZenCODEACPBridge {
                 _ = try availableACPAgentProfiles()
             }
             let outcome = await controller.runPlanCommand(
-                line: routedPromptText,
+                line: commandLine,
                 fence: fence,
                 policy: policy
             )
@@ -229,6 +236,7 @@ extension ZenCODEACPBridge {
                 )
             }
             return try acpRoute(for: outcome, context: .plan(action), controller: controller, fence: fence)
+                .addingEditorContext(editorContext)
         }
     }
 
@@ -258,13 +266,13 @@ extension ZenCODEACPBridge {
 
     /// A plain message: the Goal of `/plan approve`, the answer to a Planner
     /// question, or the reply to a `/goal` workflow, in that order; otherwise
-    /// an ordinary prompt.
+    /// no route (the caller uses the whole rendered prompt).
     private func routeACPPendingReply(
         _ reply: String,
         session: SessionState,
         fence: ChatCommandFence,
         policy: ChatPlanningCommandPolicy
-    ) async throws -> ACPCommandTurnRoute {
+    ) async throws -> ACPCommandTurnRoute? {
         let controller = session.controller
         let state = controller.commandState
         let approvalTakesReply = state.pendingPlanApprovalPlanID != nil && reply.nilIfBlank != nil
@@ -287,7 +295,7 @@ extension ZenCODEACPBridge {
                 sessionID: session.id
             ), projected.isAwaitingReply else {
                 // Nothing armed: the message stays an ordinary prompt.
-                return .generate(prompt: reply, purpose: .normal)
+                return nil
             }
             if projected != stored {
                 guard controller.commitCommandState(ifCurrent: fence, { $0.activeWorkflow = projected }) else {
@@ -314,7 +322,7 @@ extension ZenCODEACPBridge {
             guard controller.isCurrent(fence) else {
                 throw CancellationError()
             }
-            return .generate(prompt: reply, purpose: .normal)
+            return nil
         }
         let context: ACPCommandNoticeContext = approvalTakesReply
             ? .approvalReply

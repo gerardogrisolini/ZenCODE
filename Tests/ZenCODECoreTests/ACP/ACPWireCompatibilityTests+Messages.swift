@@ -86,10 +86,11 @@ extension ACPCompatibilityTests {
 
         for (value, expected) in cases {
             #expect(ACPConsentHost.permissionOptionID(from: value) == expected)
+            #expect(ACPConsentHost.permissionOutcome(from: value) == .option(expected))
         }
     }
 
-            @Test
+    @Test
     func cancelledPermissionOutcomeDoesNotSelectOption() {
         let value = JSONValue.object([
             "outcome": .object([
@@ -116,6 +117,53 @@ extension ACPCompatibilityTests {
         // No option and no cancellation stays a reply the agent cannot trust.
         #expect(ACPConsentHost.permissionOutcome(from: .object([:])) == .unknown)
         #expect(ACPConsentHost.permissionOutcome(from: nil) == .unknown)
+    }
+
+    @Test
+    func cancellationTakesPrecedenceOverContradictorySelectionFields() {
+        let replies: [JSONValue] = [
+            .object(["outcome": .string("cancelled"), "optionId": .string("allow_once")]),
+            .object([
+                "outcome": .object(["outcome": .string("cancelled"), "option_id": .string("allow_always")]),
+                "confirmKey": .string("allow_once"),
+            ]),
+            .object([
+                "outcome": .object(["outcome": .string("selected"), "optionId": .string("allow_once")]),
+                "selected": .object(["outcome": .string("cancelled"), "confirm_key": .string("allow_always")]),
+            ]),
+        ]
+        for reply in replies {
+            #expect(ACPConsentHost.permissionOutcome(from: reply) == .cancelled)
+            #expect(ACPConsentHost.permissionOptionID(from: reply) == nil)
+        }
+    }
+
+    @Test
+    func writerFallsBackForUnrepresentableErrorCode() async throws {
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        defer { continuation.finish() }
+        let writer = ACPWriter { continuation.yield($0) }
+        let request = Task { try await writer.request(method: "test", params: .object([:])) }
+        defer { request.cancel() }
+        var iterator = stream.makeAsyncIterator()
+        let payload = try #require(await iterator.next())
+        let sent = try JSONDecoder().decode(JSONValue.self, from: payload)
+        let id = try #require(sent.objectValue?["id"])
+        let decoded = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(#"{"error":{"code":1e100,"message":"malformed code"}}"#.utf8)
+        )
+        await writer.handleResponse(.object(["id": id, "error": try #require(decoded.objectValue?["error"])]))
+        do {
+            _ = try await request.value
+            Issue.record("The writer must report the client error")
+        } catch let error as ACPClientError {
+            #expect(error.code == -32603)
+            #expect(error.message == "malformed code")
+            #expect(!error.isResourceNotFound)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test

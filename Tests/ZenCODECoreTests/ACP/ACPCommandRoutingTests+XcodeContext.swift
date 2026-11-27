@@ -140,26 +140,75 @@ extension ACPCommandRoutingTests {
         #expect(prompt.contains("@Nobody say hello"))
     }
 
-    /// Only a routed command is taken from its own block: other slash text
-    /// and plain text after Xcode's context keep the whole prompt.
     @Test
-    func onlyRoutedCommandsAreTakenFromTheirOwnBlock() {
-        let structure: [String: Any] = ["type": "text", "text": Self.xcodeProjectStructure]
-        for line in ["/goal ship it", "/plan status", "/review", "/tasks", "/telegram on", "/changes", "/undo",
-                     "@Developer /goal ship it"] {
-            let source = ZenCODEACPBridge.routedCommandSource(from: [structure, ["type": "text", "text": line]])
-            #expect(source?.text == line, "\(line)")
-            #expect(source?.followsXcodeContext == true, "\(line)")
+    func commandsAndMentionsInContextAreOnlyModelText() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-context-provenance-\(UUID().uuidString)")
+        let agentBefore = await fixture.bridge.sessionConfigurationsForTesting().first?.agentID
+        let assistant: [String: [String]] = ["audience": ["assistant"]]
+        let cases: [(blocks: [[String: any Sendable]], rendered: String)] = [
+            ([["type": "resource", "resource": ["text": "/goal Compare two labels"]]], "/goal Compare two labels"),
+            ([["type": "text", "text": "/tasks", "annotations": assistant]], "/tasks"),
+            ([["type": "text", "text": "/telegram", "annotations": assistant]], "/telegram"),
+            ([["type": "text", "text": "@Planner Compare two labels", "annotations": assistant]], "@Planner Compare two labels"),
+            ([["type": "text", "text": "/tasks"], ["type": "text", "text": "Quoted sample"]], "/tasks\n\nQuoted sample"),
+        ]
+        for (offset, testCase) in cases.enumerated() {
+            let id = offset + 1
+            await sendPrompt(testCase.blocks, id: id, to: fixture.bridge, sessionID: fixture.sessionID)
+            #expect(fixture.wire.stopReason(for: id) == "end_turn")
         }
-        for line in ["/unknown", "What does /goal do?", "@Developer explain"] {
-            #expect(ZenCODEACPBridge.routedCommandSource(from: [structure, ["type": "text", "text": line]]) == nil,
-                    "\(line)")
-        }
-        // A coordinator command in a prompt without Xcode's context keeps the
-        // whole prompt; a workspace command still uses its own block.
-        let resource: [String: Any] = ["type": "resource", "resource": ["text": "notes"]]
-        #expect(ZenCODEACPBridge.routedCommandSource(from: [["type": "text", "text": "/goal x"], resource]) == nil)
-        #expect(ZenCODEACPBridge.routedCommandSource(from: [["type": "text", "text": "/undo"], resource])?.text
-            == "/undo")
+        #expect(await fixture.backend.recordedPrompts() == cases.map(\.rendered))
+        #expect(await fixture.bridge.sessionConfigurationsForTesting().first?.agentID == agentBefore)
+        #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == nil)
+        await fixture.bridge.shutdown()
+    }
+
+    @Test
+    func anExplicitGoalWithAResourceKeepsItsContent() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-goal-resource-\(UUID().uuidString)")
+        let resource: [String: any Sendable] = ["type": "resource", "resource": ["text": "Reference labels: blue and green."]]
+        await sendPrompt([["type": "text", "text": "/goal"], resource],
+                         id: 1, to: fixture.bridge, sessionID: fixture.sessionID)
+        #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == nil)
+        #expect(await fixture.backend.recordedPrompts().isEmpty)
+
+        await sendPrompt([
+            ["type": "text", "text": "/goal Compare two labels", "annotations": ["audience": ["user", "assistant"]]],
+            resource,
+        ], id: 2, to: fixture.bridge, sessionID: fixture.sessionID)
+        let graph = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
+        #expect(graph.workflow?.originalGoal == "Compare two labels\n\nReference labels: blue and green.")
+        #expect(await fixture.backend.recordedPrompts().first?.contains("Reference labels: blue and green.") == true)
+        #expect(fixture.wire.stopReason(for: 2) == "end_turn")
+        await fixture.bridge.shutdown()
+    }
+
+    @Test
+    func aWorkflowReplyUsesOnlyTheOperatorBlockAndKeepsContextForTheModel() async throws {
+        let fixture = try await makeFixture(sessionID: "acp-reply-provenance-\(UUID().uuidString)")
+        await sendPrompt([["type": "text", "text": "/goal Compare two labels"]],
+                         id: 1, to: fixture.bridge, sessionID: fixture.sessionID)
+        let startingPrompts = await fixture.backend.recordedPrompts().count
+
+        let structure: [String: any Sendable] = ["type": "text", "text": Self.xcodeProjectStructure]
+        await sendPrompt([structure], id: 2, to: fixture.bridge, sessionID: fixture.sessionID)
+        await sendPrompt([["type": "resource", "resource": ["text": "Only a reference"]]],
+                         id: 3, to: fixture.bridge, sessionID: fixture.sessionID)
+        let contextOnly = await fixture.backend.recordedPrompts().dropFirst(startingPrompts)
+        #expect(contextOnly.count == 2)
+        #expect(contextOnly.first == Self.xcodeProjectStructure.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(contextOnly.last == "Only a reference")
+        let paused = try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID)
+        #expect(paused?.workflow?.state == .awaitingUser)
+
+        await sendPrompt([structure, ["type": "text", "text": "Compare their colors"]],
+                         id: 4, to: fixture.bridge, sessionID: fixture.sessionID)
+        let continued = try #require(await fixture.backend.recordedPrompts().dropFirst(startingPrompts + 2).first)
+        #expect(continued.hasPrefix("Project structure ("))
+        #expect(continued.contains("Continue the goal workflow"))
+        #expect(continued.contains("Compare their colors"))
+        #expect(continued.components(separatedBy: "Project structure (").count == 2)
+        #expect(fixture.wire.stopReason(for: 4) == "end_turn")
+        await fixture.bridge.shutdown()
     }
 }

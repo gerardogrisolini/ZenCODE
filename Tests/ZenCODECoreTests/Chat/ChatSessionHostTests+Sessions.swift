@@ -112,6 +112,7 @@ extension ChatSessionHostTests {
             host.retireIncarnation(in: retired, controller: incarnation.controller)
             #expect(incarnation.controller.isCurrentTurn(turnToken, sessionID: "retired-session") == false)
             #expect(host.holdsPrompt(held))
+            #expect(host.beginPromptCommandFence(held) == nil)
             #expect(host.releasePrompt(held))
             #expect(throws: ChatSessionHostError.noSession) { try host.reservePrompt(in: retired) }
             #expect(throws: ChatSessionHostError.noSession) { try host.reserveReconfiguration(in: retired) }
@@ -126,11 +127,12 @@ extension ChatSessionHostTests {
             }
             // The other slot is untouched.
             let otherReservation = try host.reservePrompt(in: other)
-            #expect(host.releasePrompt(otherReservation))
             await host.closeSlot(retired)
             #expect(host.retirement.isRetired(retired) == false)
 
             host.beginShutdown()
+            #expect(host.beginPromptCommandFence(otherReservation) == nil)
+            #expect(host.releasePrompt(otherReservation))
             #expect(throws: ChatSessionHostError.shutDown) { try host.reservePrompt(in: other) }
             #expect(throws: ChatSessionHostError.shutDown) { try host.reserveReconfiguration(in: other) }
             #expect(host.incarnation(in: other) != nil)

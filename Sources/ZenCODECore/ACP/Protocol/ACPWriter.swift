@@ -119,7 +119,7 @@ public actor ACPWriter {
             let message = errorObject["message"]?.acpStringValue ?? "ACP host request failed."
             // The code tells a caller what the host refused: a missing file is
             // not an empty one, and a denied path is not a missing file.
-            let code = errorObject["code"]?.numberValue.map { Int($0) } ?? -32603
+            let code = errorObject["code"]?.numberValue.flatMap { Int(exactly: $0) } ?? -32603
             continuation.resume(throwing: ACPClientError(code: code, message: message))
             return
         }

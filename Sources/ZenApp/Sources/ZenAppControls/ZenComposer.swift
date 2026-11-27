@@ -86,8 +86,8 @@ public struct ZenComposerDraftUpdate: Equatable, Sendable {
 /// (``ZenComposerLogic/keyHint(isBusy:isSpeaking:hasSuggestions:)``).
 ///
 /// With a footer, the container ends, as the terminal's input panel does,
-/// with a separator from edge to edge and the footer under it, aligned with
-/// the field's text and the key hint (the app passes its status line). The
+/// with a separator from edge to edge and the footer under it, sharing the
+/// composer buttons' horizontal inset (the app passes its status line). The
 /// composer does not read what the footer shows, so a footer that changes
 /// redraws only itself.
 ///
@@ -290,7 +290,6 @@ public struct ZenComposer<Footer: View>: View {
                     .frame(height: 1)
                     .padding(.horizontal, -Self.horizontalInset)
                 footer
-                    .padding(.leading, attachButtonWidth + Self.rowSpacing)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

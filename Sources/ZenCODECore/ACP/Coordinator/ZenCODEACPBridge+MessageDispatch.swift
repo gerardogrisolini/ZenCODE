@@ -102,21 +102,13 @@ extension ZenCODEACPBridge {
             // (`lifecycleOperationFenceError()`), answered above: the
             // transport is open and JSON-RPC requires a response.
         } catch is CancellationError {
-            // `session/prompt` is the only method whose contract defines a
-            // cancelled stop reason; every other request that unwinds by
-            // cancellation (the caller went away) is a JSON-RPC error.
-            if method == "session/prompt" {
-                await writer.sendResultIfRequest(
-                    id: id,
-                    result: JSONValue.acpValue(from: ["stopReason": "cancelled"])
-                )
-            } else {
-                await writer.sendErrorIfRequest(
-                    id: id,
-                    code: -32800,
-                    message: "Request cancelled."
-                )
-            }
+            // A prompt answers cancellation inside its own drain token.
+            // Cancellation of any other request is a JSON-RPC error.
+            await writer.sendErrorIfRequest(
+                id: id,
+                code: -32800,
+                message: "Request cancelled."
+            )
         } catch {
             await writer.sendErrorIfRequest(
                 id: id,

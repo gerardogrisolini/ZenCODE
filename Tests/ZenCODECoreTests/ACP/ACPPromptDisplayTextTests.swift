@@ -160,7 +160,7 @@ struct ACPPromptDisplayTextTests {
     @Test
     func theDisplayTextOfACommandTurnIsThePromptAfterTheContext() throws {
         let blocks: [Any] = [Self.text(Self.reminder), Self.text(Self.structure), Self.text("/goal ship it")]
-        let source = try #require(ZenCODEACPBridge.routedCommandSource(from: blocks))
+        let source = try #require(ZenCODEACPBridge.commandSource(from: blocks))
         #expect(source.text == "/goal ship it")
         let editorContext = ZenCODEACPBridge.editorContext(around: source, in: blocks)
         #expect(editorContext?.hasPrefix("<system-reminder>") == true)

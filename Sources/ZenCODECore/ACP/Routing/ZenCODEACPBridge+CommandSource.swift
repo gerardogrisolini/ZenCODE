@@ -13,9 +13,9 @@ import ToolCore
 import ZenCODERuntime
 
 /// The operator's text block of a prompt: the last non-blank text block
-/// addressed to the user, when every text block before it is context Xcode
-/// sends. Rendered resources, media, and assistant-only text are not input
-/// typed by the operator and never name a command.
+/// addressed to the user, when it is not Xcode context and every eligible
+/// text block before it is. Rendered resources, media, and text not addressed
+/// to the user are never operator input.
 struct ACPPromptCommandSource {
     /// The operator's text, trimmed.
     let text: String
@@ -32,6 +32,7 @@ extension ZenCODEACPBridge {
     static func commandSource(from blocks: [Any]) -> ACPPromptCommandSource? {
         let texts = userTextBlocks(in: blocks)
         guard let last = texts.last,
+              !isXcodeContextBlock(last.text),
               texts.dropLast().allSatisfy({ isXcodeContextBlock($0.text) }) else { return nil }
         return ACPPromptCommandSource(text: last.text, blockIndex: last.index, followsXcodeContext: texts.count > 1)
     }
@@ -47,14 +48,15 @@ extension ZenCODEACPBridge {
                 rawText = text
             } else {
                 guard let object = block as? [String: Any],
-                      (object["type"] as? String ?? "text").lowercased() == "text",
+                      object["type"] == nil || (object["type"] as? String)?.lowercased() == "text",
                       let text = object["text"] as? String else {
                     continue
                 }
-                if let annotations = object["annotations"] as? [String: Any],
-                   let audience = annotations["audience"] as? [String],
-                   !audience.contains("user") {
-                    continue
+                if let rawAnnotations = object["annotations"] {
+                    guard let annotations = rawAnnotations as? [String: Any] else { continue }
+                    if let rawAudience = annotations["audience"] {
+                        guard let audience = rawAudience as? [String], audience.contains("user") else { continue }
+                    }
                 }
                 rawText = text
             }
@@ -113,52 +115,6 @@ extension ZenCODEACPBridge {
         (text.hasPrefix("<system-reminder>") && text.hasSuffix("</system-reminder>"))
             || text.hasPrefix("Project structure:")
             || text.hasPrefix("Project structure (")
-    }
-
-    /// Whether `text` names a command the bridge routes itself, after the
-    /// agent mention it may start with: `/goal`, `/plan`, `/review`, `/tasks`,
-    /// `/telegram`, `/changes`, or `/undo`.
-    static func namesACPRoutedCommand(_ text: String) -> Bool {
-        var line = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if line.hasPrefix("@") {
-            line = String(line.drop { !$0.isWhitespace })
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        switch ChatCommandRegistry.commandToken(from: line) {
-        case changesCommandToken, undoCommandToken, tasksCommandToken, telegramCommandToken:
-            return true
-        default:
-            return CoordinatorCommandParser.parse(line) != nil
-        }
-    }
-
-    /// The source a prompt routes its command from, when it is not the whole
-    /// rendered prompt: a workspace command in its own block, as before, and
-    /// any routed command typed after Xcode's context. Without that context a
-    /// coordinator command keeps the whole prompt, so a client that sends a
-    /// resource with `/goal` still gives the goal its content.
-    static func routedCommandSource(from blocks: [Any]) -> ACPPromptCommandSource? {
-        guard let source = commandSource(from: blocks),
-              isWorkspaceCommand(source.text)
-                || (source.followsXcodeContext && namesACPRoutedCommand(source.text)) else {
-            return nil
-        }
-        return source
-    }
-
-    /// The source a prompt routes from: the commands of
-    /// ``routedCommandSource(from:)`` and, after Xcode's context, a leading
-    /// mention of a known agent, which a prompt that starts with the context
-    /// would never reach. A mention of no known agent keeps the whole prompt.
-    func routedPromptSource(from blocks: [Any]) throws -> ACPPromptCommandSource? {
-        if let source = Self.routedCommandSource(from: blocks) {
-            return source
-        }
-        guard let source = Self.commandSource(from: blocks), source.followsXcodeContext,
-              try resolveLeadingACPAgentMention(in: source.text) != nil else {
-            return nil
-        }
-        return source
     }
 
     /// The rest of the prompt around `source`, rendered as the turn renders
