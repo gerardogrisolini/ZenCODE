@@ -81,6 +81,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   finishes, as the terminal and Telegram do, and keeps refreshing it while it
   shows a sub-agent at work, so one that ends after the turn, or after a
   shared-chat message woke it, leaves the card too.
+- Changing the model (or the agent) of a session no longer restarts the Swift
+  features: the rebuilt backend reuses the session's feature runtime, so
+  `xcode-tools` keeps the Xcode connection it already holds authorized and
+  Xcode does not ask for consent again. Before, the production backend factory
+  used by `zen` and by the macOS app created a feature runtime for every
+  backend, and releasing the old one closed the persistent feature processes
+  and the `mcpbridge` connection.
 
 ## [6.2.2] - 2026-11-25
 

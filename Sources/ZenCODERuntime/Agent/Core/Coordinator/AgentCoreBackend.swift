@@ -347,7 +347,14 @@ public actor AgentCoreBackend {
         generation: UInt64
     ) async throws -> any AgentRuntimeBackend {
         if let backendFactory {
-            let backend = try backendFactory(configuration, mcpRuntime)
+            // The factory keeps its two-parameter signature, so the session's
+            // feature runtime travels in the configuration: a backend rebuilt
+            // for a model or agent change reuses it instead of restarting the
+            // feature processes (and asking Xcode for consent again).
+            let backend = try backendFactory(
+                configuration.withSwiftFeatureRuntime(swiftFeatureRuntime),
+                mcpRuntime
+            )
             do {
                 try await installResolvedBackend(backend, generation: generation)
                 await closeDS4EngineIfNonDS4Backend(backend)

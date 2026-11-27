@@ -626,6 +626,12 @@ factory they receive, or `productionBackendFactory` when it is `nil`, and a
 `TerminalChat` created without a runner uses the default. The ACP bridge
 builds its runner as before, with the factory it receives. The fallback of
 `AgentCoreBackend.prepareBackend` for a `nil` factory stays for compatibility.
+`AgentCoreBackend` hands the feature runtime of the runner to the factory in
+`AgentRuntimeConfiguration.swiftFeatureRuntime` (the factory keeps its two
+parameters), and `productionBackendFactory` forwards it to the remote backend:
+a backend rebuilt for a change of model or agent shares that runtime instead of
+creating one of its own, so the feature processes and the Xcode consent of
+`xcode-tools` survive the change.
 `ChatSessionHost.telegramRouter()` (`ChatSessionHost+Telegram.swift`) builds
 the route authority of the Telegram settings once per host, which saves every
 route change with `AgentSettingsManifestStore.saveTelegramRoutes(_:ownerUserID:)`,

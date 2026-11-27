@@ -21,10 +21,16 @@
 public enum ChatSessionRuntimeFactory {
     /// The production backend: the remote generation client of the selected
     /// provider. Building it opens no connection.
+    ///
+    /// The feature runtime of the session travels in
+    /// ``AgentRuntimeConfiguration/swiftFeatureRuntime`` and is forwarded to the
+    /// remote client, so a backend rebuilt for a model or agent change shares
+    /// it instead of creating (and later releasing) a runtime of its own.
     public static let productionBackendFactory: AgentRuntimeBackendFactory = { configuration, mcpRuntime in
         try AgentRemoteBackendFactory.makeRemoteBackend(
             configuration: configuration,
-            mcpRuntime: mcpRuntime
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: configuration.swiftFeatureRuntime
         )
     }
 
@@ -36,8 +42,11 @@ public enum ChatSessionRuntimeFactory {
     ///     With nil only the handler of each turn decides; a gated call with
     ///     neither fails closed.
     ///   - featureRuntime: Session-scoped feature runtime, shared with the
-    ///     controller's ``ChatSessionEnvironment``. It must not be recreated
-    ///     while a backend is live.
+    ///     controller's ``ChatSessionEnvironment``. The runner also hands it to
+    ///     every backend its factory builds (through
+    ///     ``AgentRuntimeConfiguration/swiftFeatureRuntime``), so it survives a
+    ///     change of model or agent. It must not be recreated while a backend
+    ///     is live.
     ///   - mcpRuntime: Runtime of the external MCP tools.
     ///   - backendFactory: Backend of the session; defaults to
     ///     ``productionBackendFactory``.

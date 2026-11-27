@@ -181,6 +181,12 @@ public struct AgentRuntimeConfiguration: Sendable {
     /// ``delegatingSessionID``, projected into the child's
     /// ``ToolExecutionContext``; `false` for a top-level session.
     public private(set) var inheritsFeatureExposures: Bool
+    /// The session's feature runtime, which a backend factory must reuse when
+    /// it builds a backend. Reusing it keeps the feature processes (and the
+    /// connections they hold, such as the authorized Xcode connection of
+    /// `xcode-tools`) alive when the backend is rebuilt, for example after a
+    /// model or agent change. `nil` lets the backend create its own runtime.
+    public private(set) var swiftFeatureRuntime: SwiftFeatureRuntime?
 
     public init(
         modelID: String?,
@@ -198,7 +204,8 @@ public struct AgentRuntimeConfiguration: Sendable {
         profileName: String? = nil,
         profileRole: AgentProfileRole? = nil,
         delegatingSessionID: String? = nil,
-        inheritsFeatureExposures: Bool = false
+        inheritsFeatureExposures: Bool = false,
+        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
     ) {
         self.modelID = modelID?.nilIfBlank
         self.workingDirectory = workingDirectory
@@ -218,6 +225,7 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.profileRole = profileRole
         self.delegatingSessionID = delegatingSessionID?.nilIfBlank
         self.inheritsFeatureExposures = inheritsFeatureExposures
+        self.swiftFeatureRuntime = swiftFeatureRuntime
     }
 
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
@@ -238,6 +246,14 @@ public struct AgentRuntimeConfiguration: Sendable {
         _ toolAuthorizationHandler: AgentToolAuthorizationHandler?
     ) -> AgentRuntimeConfiguration {
         renormalized { $0.toolAuthorizationHandler = toolAuthorizationHandler }
+    }
+
+    /// This configuration carrying the session's feature runtime (see
+    /// ``swiftFeatureRuntime``); `nil` leaves the backend to create its own.
+    public func withSwiftFeatureRuntime(
+        _ swiftFeatureRuntime: SwiftFeatureRuntime?
+    ) -> AgentRuntimeConfiguration {
+        renormalized { $0.swiftFeatureRuntime = swiftFeatureRuntime }
     }
 
     public func withProfileIdentity(
@@ -299,7 +315,8 @@ public struct AgentRuntimeConfiguration: Sendable {
             profileName: copy.profileName,
             profileRole: copy.profileRole,
             delegatingSessionID: copy.delegatingSessionID,
-            inheritsFeatureExposures: copy.inheritsFeatureExposures
+            inheritsFeatureExposures: copy.inheritsFeatureExposures,
+            swiftFeatureRuntime: copy.swiftFeatureRuntime
         )
     }
 }
