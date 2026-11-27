@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- macOS app: darkened the composer background in Dark Mode without changing
+  its border or footer divider colors.
+- macOS app: aligned the conversation transcript and composer to the same
+  16-point horizontal inset, with 16 points below the composer as well.
 - Terminal: the `/subagent` and `/artifacts` panels are now modal and take the
   whole screen, as the sub-agent tabs of the macOS app do. While one is open,
   in its list and in its detail, the shared-chat dock, the input panel, and the

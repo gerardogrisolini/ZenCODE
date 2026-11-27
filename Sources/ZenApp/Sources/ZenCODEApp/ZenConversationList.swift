@@ -188,7 +188,7 @@ struct ZenConversationList: View {
                     ZenLiveRows(session: session, search: $search)
                     ZenOverviewCards(session: session)
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, ZenConversationScreen.contentInset)
                 .padding(.top, 16)
                 .padding(.bottom, 12)
             }

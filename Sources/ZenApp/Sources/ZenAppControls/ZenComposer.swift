@@ -99,6 +99,7 @@ public struct ZenComposerDraftUpdate: Equatable, Sendable {
 /// already wraps it in one and passes `usesGlassContainer: false`.
 public struct ZenComposer<Footer: View>: View {
     @Environment(\.zenPalette) var palette
+    @Environment(\.colorScheme) private var colorScheme
 
     @Binding private var draft: String
     private let isBusy: Bool
@@ -295,6 +296,10 @@ public struct ZenComposer<Footer: View>: View {
         }
         .padding(.horizontal, Self.horizontalInset)
         .padding(.vertical, 8)
+        .background(
+            palette.promptBackground.opacity(colorScheme == .dark && !isDropTargeted ? 0.65 : 0),
+            in: .rect(cornerRadius: 20)
+        )
         // The border is part of the glass's content, as the footer's separator
         // is, so the glass renders both alike; an overlay after `glassEffect`
         // stays outside its foreground treatment and fades on the material.

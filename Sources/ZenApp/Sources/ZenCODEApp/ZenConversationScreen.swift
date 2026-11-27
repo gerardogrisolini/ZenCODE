@@ -71,6 +71,8 @@ enum ZenEscapeAction: Equatable {
 /// artifacts, and the shared chat are read by the subviews that show them, so
 /// a status update does not run this body.
 struct ZenConversationScreen: View {
+    static let contentInset: CGFloat = 16
+
     let session: ZenWindowSession
 
     @FocusState private var isComposerFocused: Bool
@@ -207,7 +209,7 @@ struct ZenBottomChrome: View {
                     .modifier(ZenWindowMenuPopover(session: session))
             }
         }
-        .padding([.bottom, .horizontal], 12)
+        .padding([.bottom, .horizontal], ZenConversationScreen.contentInset)
         .padding(.top, 6)
     }
 
