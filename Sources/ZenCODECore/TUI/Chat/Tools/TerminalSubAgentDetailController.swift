@@ -164,8 +164,9 @@ final class TerminalSubAgentDetailController {
     /// the scrolling keys scroll and Esc goes back to the list when the panel
     /// opened on it (``returnsToList``, with the focus on that agent, the
     /// following ended, and ``Environment/modeDidChange`` told), otherwise it
-    /// closes (the panel leaves `q` and Enter to the prompt there). The list's
-    /// `q` (``TerminalSubAgentDetailAction/closeList``) that reaches an agent's
+    /// closes (the panel is modal: `q` and Enter never reach the prompt there,
+    /// the routing swallows them). The list's `q`
+    /// (``TerminalSubAgentDetailAction/closeList``) that reaches an agent's
     /// detail was typed ahead of the switch to it and is ignored, so it never
     /// closes the detail just opened. Every other key is ignored, and so is
     /// every key after ``stop()``.
@@ -386,7 +387,15 @@ final class TerminalSubAgentDetailController {
 
     // MARK: - Rendering
 
-    /// Draws the panel for the current viewport and presents it.
+    /// Draws the panel again for the current viewport, without reading
+    /// anything: what changed is outside the panel's own data, the
+    /// shared-chat badge of the bottom border. Does nothing after ``stop()``.
+    func redraw() {
+        render()
+    }
+
+    /// Draws the panel for the current viewport and presents it, with
+    /// ``border`` in its bottom border.
     private func render() {
         guard !isStopped else { return }
         let viewport = viewportWatch.frameViewport()
@@ -399,7 +408,24 @@ final class TerminalSubAgentDetailController {
             bodyRows = body(width: width)
         }
         panel.replace(headerRows: headerRows, bodyRows: bodyRows, frameRows: viewport.rows)
-        environment.present(panel.frameLines(rows: viewport.rows, columns: viewport.columns))
+        environment.present(panel.frameLines(rows: viewport.rows, columns: viewport.columns, border: border))
+    }
+
+    /// What the bottom border says now: the unread shared-chat messages and
+    /// the help of the mode the panel shows (the list, or an agent's detail
+    /// that goes back to it or closes the panel).
+    var border: TerminalSubAgentDetailPanel.BorderStatus {
+        let mode: TerminalInteractiveLineReader.SubAgentDetailMode
+        if case .choosing = panel.mode {
+            mode = .list
+        } else {
+            mode = .detail
+        }
+        return TerminalSubAgentDetailPanel.BorderStatus(
+            unreadSharedChatCount: environment.sharedChatUnreadCount(),
+            help: TerminalDetailPanel.Kind.subAgent
+                .panelModeOverride(for: mode, detailReturnsToList: returnsToList)?.helpText
+        )
     }
 
     private func header(width: Int) -> [String] {

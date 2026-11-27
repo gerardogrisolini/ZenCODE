@@ -12,6 +12,41 @@ import ToolCore
 @testable import ZenCODECore
 
 extension TerminalArtifactsPanelControllerTests {
+    // MARK: Bottom border
+
+    /// The bottom border carries the keys of the mode (the list's, then the
+    /// diff's `Esc back` once it was opened from the list) and the unread
+    /// shared-chat badge, which ``TerminalArtifactsPanelController/redraw()``
+    /// follows without reading the snapshot; a stopped controller draws
+    /// nothing.
+    @Test func theBottomBorderCarriesTheHelpOfTheModeAndTheUnreadBadge() async {
+        let harness = ArtifactsHarness(threeTurns)
+        let controller = harness.makeController()
+        func bottom() -> String? {
+            harness.frames.last?.last.map(TerminalANSIText.stripANSI)
+        }
+        controller.open(choosing: threeTurns)
+        #expect(bottom()?.hasPrefix("╰─ ↑↓ choose · Enter open · Esc close ─") == true)
+
+        harness.unreadSharedChatCount = 4
+        let frames = harness.frames.count
+        controller.redraw()
+        #expect(harness.frames.count == frames + 1)
+        #expect(bottom()?.hasPrefix("╰─ Chat: 4 new · ↑↓ choose · Enter open · Esc close ─") == true)
+        #expect(harness.feed.reads == 0)
+
+        await controller.handle(.confirm)
+        #expect(bottom()?.hasPrefix("╰─ Chat: 4 new · ↑↓ PgUp PgDn Home End scroll · Esc back ─") == true)
+        harness.unreadSharedChatCount = 0
+        controller.redraw()
+        #expect(bottom()?.hasPrefix("╰─ ↑↓ PgUp PgDn Home End scroll · Esc back ─") == true)
+
+        controller.stop()
+        let stopped = harness.frames.count
+        controller.redraw()
+        #expect(harness.frames.count == stopped)
+    }
+
     // MARK: Esc in a file's diff
 
     @Test func escInTheDiffOfAFileFromTheListGoesBackToTheList() async {
@@ -37,7 +72,7 @@ extension TerminalArtifactsPanelControllerTests {
         #expect(controller.panel.headerRows.isEmpty)
         #expect(controller.panel.bodyRows.isEmpty)
         #expect(controller.panel.title == Controller.title)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         #expect(Array(listContents(harness.frames.last ?? []).prefix(5)) == [
             "  turn 3 · in progress  modified  +1 -1  C.swift",
             "",
@@ -146,7 +181,7 @@ extension TerminalArtifactsPanelControllerTests {
         controller.reload()
         await waitUntil("the read is applied") { controller.entries.count == 4 }
         #expect(focusedIndex(controller) == 2)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         controller.stop()
     }
 }

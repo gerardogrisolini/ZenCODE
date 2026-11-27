@@ -80,6 +80,10 @@ final class TerminalArtifactsPanelController {
         /// Called when the panel moves between the file list (`isChoosing`)
         /// and a file's diff.
         var modeDidChange: @ChatSessionActor (_ isChoosing: Bool) async -> Void
+        /// The shared-chat messages not read yet, read at every frame for the
+        /// badge of the bottom border
+        /// (``TerminalSubAgentDetailPanel/BorderStatus/unreadSharedChatCount``).
+        var sharedChatUnreadCount: @ChatSessionActor () -> Int
         /// Whether the rows carry ANSI styling.
         var standardErrorIsTerminal: Bool
         /// Waits for a duration; throws when its task is cancelled.
@@ -99,6 +103,7 @@ final class TerminalArtifactsPanelController {
             isCancelled: @escaping @ChatSessionActor () -> Bool,
             onClosed: @escaping @ChatSessionActor (CloseReason) async -> Void,
             modeDidChange: @escaping @ChatSessionActor (_ isChoosing: Bool) async -> Void = { _ in },
+            sharedChatUnreadCount: @escaping @ChatSessionActor () -> Int = { 0 },
             standardErrorIsTerminal: Bool,
             sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
             reloadInterval: Duration = .milliseconds(500),
@@ -112,6 +117,7 @@ final class TerminalArtifactsPanelController {
             self.isCancelled = isCancelled
             self.onClosed = onClosed
             self.modeDidChange = modeDidChange
+            self.sharedChatUnreadCount = sharedChatUnreadCount
             self.standardErrorIsTerminal = standardErrorIsTerminal
             self.sleep = sleep
             self.reloadInterval = reloadInterval
@@ -202,11 +208,11 @@ final class TerminalArtifactsPanelController {
     /// scrolling keys scroll and Esc goes back to the list when the panel
     /// opened on it (``returnsToList``, with the focus on that file, and
     /// ``Environment/modeDidChange`` told), otherwise, or when no file is
-    /// listed any more, it closes (the panel leaves `q` and Enter to the
-    /// prompt there). The list's `q` (``TerminalSubAgentDetailAction/closeList``)
-    /// that reaches a file's diff was typed ahead of the switch to it and is
-    /// ignored. Every other key is ignored, and so is every key after
-    /// ``stop()``.
+    /// listed any more, it closes (the panel is modal: `q` and Enter never
+    /// reach the prompt there, the routing swallows them). The list's `q`
+    /// (``TerminalSubAgentDetailAction/closeList``) that reaches a file's diff
+    /// was typed ahead of the switch to it and is ignored. Every other key is
+    /// ignored, and so is every key after ``stop()``.
     func handle(_ action: TerminalSubAgentDetailAction) async {
         guard !isStopped else { return }
         switch panel.mode {
@@ -376,7 +382,15 @@ final class TerminalArtifactsPanelController {
 
     // MARK: - Rendering
 
-    /// Draws the panel for the current viewport and presents it.
+    /// Draws the panel again for the current viewport, without reading the
+    /// snapshot: what changed is outside the panel's own data, the
+    /// shared-chat badge of the bottom border. Does nothing after ``stop()``.
+    func redraw() {
+        render()
+    }
+
+    /// Draws the panel for the current viewport and presents it, with
+    /// ``border`` in its bottom border.
     private func render() {
         guard !isStopped else { return }
         let viewport = viewportWatch.frameViewport()
@@ -393,7 +407,24 @@ final class TerminalArtifactsPanelController {
             bodyRows = renderedDiff(entry.artifact, width: width)
         }
         panel.replace(headerRows: headerRows, bodyRows: bodyRows, frameRows: viewport.rows)
-        environment.present(panel.frameLines(rows: viewport.rows, columns: viewport.columns))
+        environment.present(panel.frameLines(rows: viewport.rows, columns: viewport.columns, border: border))
+    }
+
+    /// What the bottom border says now: the unread shared-chat messages and
+    /// the help of the mode the panel shows (the list, or a file's diff that
+    /// goes back to it or closes the panel).
+    var border: TerminalSubAgentDetailPanel.BorderStatus {
+        let mode: TerminalInteractiveLineReader.SubAgentDetailMode
+        if case .choosing = panel.mode {
+            mode = .list
+        } else {
+            mode = .detail
+        }
+        return TerminalSubAgentDetailPanel.BorderStatus(
+            unreadSharedChatCount: environment.sharedChatUnreadCount(),
+            help: TerminalDetailPanel.Kind.artifacts
+                .panelModeOverride(for: mode, detailReturnsToList: returnsToList)?.helpText
+        )
     }
 
     /// The rows of the diff of `artifact` at `width`, rendered again only when

@@ -32,7 +32,7 @@ extension TerminalArtifactsPanelControllerTests {
         await waitUntil("the read is applied") { controller.entries.count == 3 }
         #expect(controller.entries.map(\.id) == ["3:/repo/C.swift", "2:/repo/B.swift", "1:/repo/A.swift"])
         #expect(focusedIndex(controller) == 2)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         #expect(listContents(harness.frames.last ?? [])[4] == "▸ turn 1                modified  +1 -1  A.swift")
 
         // The focused file leaves: the focus keeps its position, clamped.
@@ -71,7 +71,7 @@ extension TerminalArtifactsPanelControllerTests {
         #expect(!controller.panel.isFollowing)
         #expect(controller.panel.bodyRows == body(longer))
         #expect(controller.diffRenderCount == 2)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
 
         // At the end of the diff a longer diff does not move the window
         // either, and the finished turn keeps the entry.
@@ -178,7 +178,7 @@ extension TerminalArtifactsPanelControllerTests {
         #expect(harness.gate.release(ArtifactsHarness.reloadInterval))
         await waitUntil("the latest read is applied") { controller.entries == Controller.entries(threeTurns) }
         #expect(harness.feed.reads == 2)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
 
         // Nothing more was asked: after the interval the reads end.
         await waitUntil("the reads wait the interval") {
@@ -298,14 +298,14 @@ extension TerminalArtifactsPanelControllerTests {
         harness.viewport = (rows: 12, columns: 40)
         #expect(harness.gate.release(ArtifactsHarness.pollInterval))
         await waitUntil("the new viewport is drawn") { harness.frames.count == 2 }
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 12, columns: 40))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 12, columns: 40, border: controller.border))
         #expect(harness.frames.last?.count == 12)
         #expect(controller.panel.bodyRows == body(long, columns: 40))
 
         harness.viewport = (rows: 16, columns: 50)
         harness.resize.signal()
         await waitUntil("the resize is drawn") { harness.frames.count == 3 }
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 16, columns: 50))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 16, columns: 50, border: controller.border))
         controller.stop()
     }
 }

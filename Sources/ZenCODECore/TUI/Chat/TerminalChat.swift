@@ -157,18 +157,24 @@ public final class TerminalChat {
     /// until the loop adopted that turn (see
     /// ``takeAdoptedTurnIfNeeded()``).
     var hasAdoptedTelegramTurn = false
-    /// The panel open now above the prompt, the `/subagent` detail or the
-    /// `/artifacts` panel, from its opening to its teardown
-    /// (``closeDetailPanel(reason:)``); `nil` while none is open. Transient:
-    /// it lasts only while the panel is shown and is never saved.
+    /// The panel open now, the `/subagent` detail or the `/artifacts` panel,
+    /// modal over the whole screen, from its opening to its teardown
+    /// (``closeDetailPanel(reason:keepsFooterHidden:)``); `nil` while none is
+    /// open. Transient: it lasts only while the panel is shown and is never
+    /// saved.
     var detailPanel: TerminalDetailPanel?
     /// `true` while ``openDetailPanel(_:on:)`` runs: from its start, across
     /// the suspensions before ``detailPanel`` is set, to its end.
     var isOpeningDetailPanel = false
-    /// A ``closeDetailPanel(reason:)`` arrived while a panel was being opened
-    /// and did not exist yet: the opening gives the terminal back and opens
-    /// nothing. Reset at every opening.
+    /// A ``closeDetailPanel(reason:keepsFooterHidden:)`` arrived while a panel
+    /// was being opened and did not exist yet: the opening gives the terminal
+    /// back and opens nothing. Reset at every opening.
     var detailPanelCloseRequestedWhileOpening = false
+    /// Reads the unread messages of the shared-chat reading buffer of the
+    /// panel loop that runs, for the badge of an open panel
+    /// (``sharedChatUnreadCount``). Installed by that loop and removed by its
+    /// teardown; transient.
+    var sharedChatUnreadCountReader: (() -> Int)?
     /// Counts the changes of the session's file artifacts the presenter
     /// reported (``fileArtifactsDidChange()``), so an `/artifacts` panel
     /// opened from a read older than a change reads again. Transient.

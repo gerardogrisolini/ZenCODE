@@ -39,7 +39,7 @@ public enum TerminalSubAgentDetailAction: Sendable, Equatable {
 /// Every frame shares one row budget, used identically by
 /// ``bodyCapacity(frameRows:)``, ``apply(_:frameRows:)``,
 /// ``replace(headerRows:bodyRows:frameRows:)`` and
-/// ``frameLines(rows:columns:)``:
+/// ``frameLines(rows:columns:border:)``:
 ///
 /// - the top and bottom borders take one row each, leaving
 ///   `interior = max(0, frameRows - 2)` rows;
@@ -87,6 +87,29 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
             self.id = id
             self.title = title
             self.details = details
+        }
+    }
+
+    /// What the bottom border says on its left, before the indicator on its
+    /// right (see ``frameLines(rows:columns:border:)``).
+    struct BorderStatus: Sendable, Equatable {
+        /// The shared-chat messages not read yet: the border shows
+        /// `Chat: N new` while it is above zero.
+        var unreadSharedChatCount: Int
+        /// The keys of the panel's mode, the
+        /// ``TerminalPanelModeOverride/helpText`` of
+        /// ``TerminalDetailPanel/Kind/panelModeOverride(for:detailReturnsToList:)``:
+        /// segments separated by ` · `, the last one being how `Esc` leaves.
+        var help: String?
+
+        init(unreadSharedChatCount: Int = 0, help: String? = nil) {
+            self.unreadSharedChatCount = unreadSharedChatCount
+            self.help = help
+        }
+
+        /// The badge of the unread shared-chat messages, `nil` without any.
+        var unreadBadge: String? {
+            unreadSharedChatCount > 0 ? "Chat: \(unreadSharedChatCount) new" : nil
         }
     }
 
@@ -197,12 +220,20 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
 
     /// Draws the framed panel as exactly `rows` lines, each `columns` visible
     /// columns wide (at least the minimal 5-column frame). One row draws only
-    /// the top border, two rows draw both borders. When the body exceeds its
-    /// window the bottom border carries a right-aligned 1-based indicator:
-    /// `rows a–b/n` for the body rows in ``Mode/showing``, `a–b/n` for the
-    /// entries in ``Mode/choosing(entries:focusedIndex:)`` while some of them
-    /// are not shown.
-    func frameLines(rows: Int, columns: Int) -> [String] {
+    /// the top border, two rows draw both borders.
+    ///
+    /// When the body exceeds its window the bottom border carries a
+    /// right-aligned 1-based indicator: `rows a–b/n` for the body rows in
+    /// ``Mode/showing``, `a–b/n` for the entries in
+    /// ``Mode/choosing(entries:focusedIndex:)`` while some of them are not
+    /// shown. On its left the border says what `border` gives, the unread
+    /// badge first, then the help:
+    /// `╰─ Chat: 2 new · ↑↓ PgUp PgDn Home End scroll · Esc close ── rows 1–9/40 ─╯`.
+    /// The indicator wins the width: the text gets only the columns it
+    /// leaves, with one `─` on each side, and shortens by priority. The help
+    /// drops its segments from the left, so `Esc close` (or `Esc back`) is the
+    /// last to go, then the help goes, then the badge.
+    func frameLines(rows: Int, columns: Int, border: BorderStatus = BorderStatus()) -> [String] {
         guard rows > 0 else { return [] }
         let columns = max(Self.minimumColumns, columns)
         let top = Self.borderLine(left: "╭", right: "╮", label: title, columns: columns)
@@ -221,9 +252,7 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
             repeating: Self.interiorLine("", columns: columns),
             count: max(0, layout.bodyCapacity - window.rows.count)
         )
-        lines.append(
-            Self.borderLine(left: "╰", right: "╯", label: window.indicator, trailing: true, columns: columns)
-        )
+        lines.append(Self.bottomBorderLine(border, indicator: window.indicator, columns: columns))
         return lines
     }
 
@@ -337,13 +366,11 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     }
 
     /// A horizontal border `columns` wide, embedding `label` after the first
-    /// rule segment when it fits with at least one trailing `─`. With
-    /// `trailing` the label is right-aligned instead, before the last segment.
+    /// rule segment when it fits with at least one trailing `─`.
     private static func borderLine(
         left: String,
         right: String,
         label: String?,
-        trailing: Bool = false,
         columns: Int
     ) -> String {
         let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
@@ -352,11 +379,52 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
         if let label {
             let fill = inner - 1 - TerminalANSIText.visibleWidth(label)
             if fill >= 1 {
-                let filler = String(repeating: "─", count: fill)
-                rule = trailing ? filler + label + "─" : "─" + label + filler
+                rule = "─" + label + String(repeating: "─", count: fill)
             }
         }
         return border + left + rule + right + reset
+    }
+
+    /// The bottom border `columns` wide: `indicator` right-aligned before the
+    /// last `─` when it fits with at least one `─` on its left, as it always
+    /// was, then on the left `─ `, the text of `status` that fits
+    /// (``borderText(_:width:)``) and a space, with at least one `─` between
+    /// the text and the indicator.
+    private static func bottomBorderLine(
+        _ status: BorderStatus,
+        indicator: String?,
+        columns: Int
+    ) -> String {
+        let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
+        let inner = columns - 2
+        var trailing = ""
+        if let indicator, inner - 1 - TerminalANSIText.visibleWidth(indicator) >= 1 {
+            trailing = indicator + "─"
+        }
+        // `─ ` before the text, ` ` after it, and at least one `─` of fill.
+        let textWidth = inner - TerminalANSIText.visibleWidth(trailing) - 4
+        let leading = borderText(status, width: textWidth).map { "─ " + $0 + " " } ?? ""
+        let fill = inner - TerminalANSIText.visibleWidth(leading) - TerminalANSIText.visibleWidth(trailing)
+        return border + "╰" + leading + String(repeating: "─", count: max(0, fill)) + trailing + "╯" + reset
+    }
+
+    /// The widest text of `status` at most `width` columns wide, by priority:
+    /// the badge with the whole help, then with the help less its first
+    /// segments one at a time, then the badge alone, then the help alone in
+    /// the same order. `nil` when nothing fits, or there is nothing to say.
+    static func borderText(_ status: BorderStatus, width: Int) -> String? {
+        guard width > 0 else { return nil }
+        let segments = (status.help ?? "")
+            .components(separatedBy: " · ")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let helps = segments.indices.map { segments[$0...].joined(separator: " · ") }
+        var candidates: [String] = []
+        if let badge = status.unreadBadge {
+            candidates += helps.map { badge + " · " + $0 }
+            candidates.append(badge)
+        }
+        candidates += helps
+        return candidates.first { TerminalANSIText.visibleWidth($0) <= width }
     }
 
     /// `TerminalCheckboxMenu.fitLine` without the leading trim: newlines become

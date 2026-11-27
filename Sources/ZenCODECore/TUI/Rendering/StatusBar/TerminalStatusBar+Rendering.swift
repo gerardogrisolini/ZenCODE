@@ -76,6 +76,10 @@ extension TerminalStatusBar {
         guard state.row > 0, state.columns > 0, !state.isResizePending else {
             return
         }
+        guard !state.isFooterHidden else {
+            commitHiddenFooterLocked(state: &state)
+            return
+        }
 
         let statusSequence = statusRenderSequenceLocked(state: &state)
         // The full render paints both input panel and status, so update the
@@ -92,11 +96,31 @@ extension TerminalStatusBar {
         state.needsViewportRebuild = false
     }
 
+    /// The render of a hidden bottom layout (``TerminalStatusBar/setFooterHidden(_:)``):
+    /// no row is reserved and nothing of the dock, the input panel or the
+    /// status is drawn. The empty footer is committed once, when the layout
+    /// is hidden, and again only for a new geometry, which the panel drawn
+    /// over the screen (a modal surface of the same compositor) needs; every
+    /// other render, a spinner tick or a new draft, writes nothing.
+    private func commitHiddenFooterLocked(state: inout State) {
+        guard !state.isHiddenFooterCommitted || state.needsViewportRebuild else { return }
+        primaryScreen.commitFooter(
+            geometry: .init(rows: state.row, columns: state.columns),
+            reservedRows: 0,
+            sequence: "",
+            rebuild: state.needsViewportRebuild
+        )
+        state.needsViewportRebuild = false
+        state.isHiddenFooterCommitted = true
+    }
+
     /// Status-only invalidation used by spinner and metrics updates. The input
     /// panel layout is unchanged, so rebuilding and repainting it would only add
-    /// allocations and terminal traffic.
+    /// allocations and terminal traffic. A hidden bottom layout draws no
+    /// status, so the sequence is not even built and the cache stays as the
+    /// transition left it (empty): showing the layout again draws it whole.
     func renderStatusLocked(state: inout State) {
-        guard state.row > 0, state.columns > 0, !state.isResizePending else {
+        guard state.row > 0, state.columns > 0, !state.isResizePending, !state.isFooterHidden else {
             return
         }
         let sequence = statusRenderSequenceLocked(state: &state)
@@ -401,6 +425,7 @@ extension TerminalStatusBar {
     }
 
     func reservedBottomRowsLocked(state: inout State) -> Int {
+        guard !state.isFooterHidden else { return 0 }
         guard let inputPanelState = state.inputPanelState else {
             return Self.standaloneStatusRows
         }

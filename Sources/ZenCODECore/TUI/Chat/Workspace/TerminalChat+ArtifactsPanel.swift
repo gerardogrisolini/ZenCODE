@@ -10,8 +10,9 @@ import ZenCODERuntime
 
 extension TerminalChat {
     /// The input panel's mode while the `/artifacts` panel shows a file's
-    /// diff. As the `/subagent` detail, it is no overlay of the prompt: below
-    /// the diff the operator keeps typing, completing and sending the draft.
+    /// diff. As with the `/subagent` detail the panel is modal and hides the
+    /// input panel, so its help is drawn in the bottom border of the panel
+    /// (``TerminalDetailPanel/Kind/panelModeOverride(for:detailReturnsToList:)``).
     nonisolated static let artifactsDetailPanelOverride = TerminalPanelModeOverride(
         modeText: "Artifacts",
         helpText: subAgentDetailPanelOverride.helpText
@@ -26,7 +27,7 @@ extension TerminalChat {
     )
 
     /// The input panel's mode while the `/artifacts` panel lists the changed
-    /// files, which own every key of the panel until one is opened.
+    /// files.
     nonisolated static let artifactsListPanelOverride = TerminalPanelModeOverride(
         modeText: "Artifacts",
         helpText: subAgentListPanelOverride.helpText
@@ -53,9 +54,12 @@ extension TerminalChat {
     /// `/artifacts`: opens the panel of the files the session changed
     /// (``TerminalArtifactsPanelController``), the turn in progress
     /// included, with the layout and the keys of `/subagent`: the list of the
-    /// files, or directly the diff of the only one. It replaces a panel
-    /// already open (the `/subagent` detail, or another `/artifacts` panel)
-    /// and runs while a prompt is generating.
+    /// files, or directly the diff of the only one. Like the `/subagent`
+    /// detail it is modal, hiding the bottom layout and owning every key but
+    /// end-of-input. It replaces a panel already open (the `/subagent`
+    /// detail, or another `/artifacts` panel), keeping the bottom layout
+    /// hidden from one panel to the other, and runs while a prompt is
+    /// generating.
     ///
     /// It accepts no arguments and, without artifacts, writes the notices of
     /// the shared `/artifacts`
@@ -78,7 +82,7 @@ extension TerminalChat {
             await writeSessionNotice(.noFileArtifacts)
             return
         }
-        await closeDetailPanel(reason: .replaced)
+        await closeDetailPanel(reason: .replaced, keepsFooterHidden: true)
         await openDetailPanel(.artifacts(snapshot, revision: revision), on: screen)
     }
 
@@ -108,6 +112,7 @@ extension TerminalChat {
             modeDidChange: { [weak self] isChoosing in
                 await self?.detailPanelModeDidChange(isChoosing: isChoosing, session: session)
             },
+            sharedChatUnreadCount: { [weak self] in self?.sharedChatUnreadCount ?? 0 },
             standardErrorIsTerminal: AgentOutput.standardErrorIsTerminal
         ))
         detailPanel = TerminalDetailPanel(content: .artifacts(controller), session: session)

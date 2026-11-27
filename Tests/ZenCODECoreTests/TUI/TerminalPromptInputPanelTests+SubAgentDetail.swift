@@ -16,7 +16,8 @@ extension TerminalPromptInputPanelTests {
 
     /// The key map of each mode: the agent list binds `Enter` and `q` too
     /// (`q` as the list's own close, distinct from `Esc`'s), an agent's
-    /// detail only the scrolling keys and `Esc`, a closed detail nothing.
+    /// detail only the scrolling keys and `Esc` (the open panel swallows
+    /// every other key), a closed detail nothing.
     @Test
     func subAgentDetailKeyMapDependsOnTheMode() {
         typealias Reader = TerminalInteractiveLineReader
@@ -69,8 +70,8 @@ extension TerminalPromptInputPanelTests {
     }
 
     /// The `/artifacts` panel routes the keys as the `/subagent` detail does
-    /// and shows its own mode, `Artifacts`, with the same help in the list and
-    /// in a file's diff.
+    /// and has its own mode, `Artifacts`, with the same help (drawn in the
+    /// panel's bottom border) in the list and in a file's diff.
     @Test
     func theArtifactsPanelShowsItsModeWithTheHelpOfTheSubAgentDetail() {
         typealias Mode = TerminalInteractiveLineReader.SubAgentDetailMode
@@ -169,14 +170,67 @@ extension TerminalPromptInputPanelTests {
         #expect(reader.withPanelLock { $0.historyIndex } == nil)
     }
 
-    /// Below an agent's detail the operator keeps typing and sending: text
-    /// (`q` and `Q` included), paste, editing and cursor keys reach the
-    /// draft and `Enter` submits it, while the press-and-hold picker stays
-    /// off as with the shared-chat reader.
+    /// Both open modes are modal: the agent list and an agent's detail own
+    /// every key the input panel reads but end-of-input. A key the mode binds
+    /// becomes its action; every other one, the reader's message keys,
+    /// `Ctrl+Y`, `Ctrl+G` and a paste included, is swallowed, and the
+    /// shared-chat reader is not even asked. Only a closed panel leaves the
+    /// keys to the reader and the draft.
+    @Test(arguments: [
+        TerminalInteractiveLineReader.SubAgentDetailMode.list,
+        .detail
+    ])
+    func anOpenPanelRoutesEveryKeyToItselfAndSwallowsTheUnboundOnes(
+        _ mode: TerminalInteractiveLineReader.SubAgentDetailMode
+    ) {
+        typealias Reader = TerminalInteractiveLineReader
+        let keys: [Reader.Key] = [
+            .character("x"), .character("q"), .character("Q"), .character("@"), .character("/"),
+            .paste("pasted"), .enter, .newline, .tab, .backspace, .delete,
+            .left, .right, .up, .down, .pageUp, .pageDown, .home, .end, .bufferStart, .bufferEnd,
+            .wordLeft, .wordRight, .deleteWordBefore, .deleteWordAfter,
+            .clearDraft, .clearBeforeCursor, .clearAfterCursor,
+            .toggleAccessMode, .toggleSharedChatReader, .cancel, .unknown
+        ]
+        for key in keys {
+            var askedTheReader = false
+            let route = Reader.panelKeyRoute(for: key, subAgentDetailMode: mode) {
+                askedTheReader = true
+                return true
+            }
+            if let action = Reader.subAgentDetailAction(for: key, mode: mode) {
+                #expect(route == .subAgentDetail(action))
+            } else {
+                #expect(route == .swallowedByDetailPanel)
+            }
+            #expect(!askedTheReader)
+        }
+        // End-of-input keeps its meaning, and a closed panel gives the reader
+        // its message keys back.
+        #expect(Reader.panelKeyRoute(for: .endOfInput, subAgentDetailMode: mode) { true } == .editor)
+        #expect(Reader.panelKeyRoute(for: .left, subAgentDetailMode: .closed) { true }
+            == .sharedChatReader(.previousMessage))
+        #expect(Reader.panelKeyRoute(for: .character("x"), subAgentDetailMode: .closed) { true } == .editor)
+    }
+
+    /// Behind an agent's detail the draft never changes: text (`q` and `Q`
+    /// included), a paste, editing and cursor keys, completion and `Enter`
+    /// are swallowed, so nothing is typed, completed or sent, and neither
+    /// `Ctrl+Y` nor `Ctrl+G` reaches the chat loop. The draft, its cursor and
+    /// the history stay as they were until the panel closes; the
+    /// press-and-hold picker stays off.
     @Test
-    func subAgentDetailLeavesTypingAndSendingToTheDraft() async {
+    func subAgentDetailIsModalAndLeavesTheDraftUntouched() async {
         let reader = TerminalInteractiveLineReader()
-        reader.withPanelLock { $0.panelSupportsPressAndHold = true }
+        reader.withPanelLock { state in
+            state.panelSupportsPressAndHold = true
+            state.history = ["earlier"]
+            state.panelBuffer = Array("draft")
+            state.panelCursorIndex = 2
+            state.panelCommandSuggestions = [
+                TerminalCommandSuggestion(command: "/subagent", summary: "Open a sub-agent")
+            ]
+        }
         reader.setSubAgentDetailMode(.detail, panelModeOverride: TerminalChat.subAgentDetailPanelOverride)
         #expect(reader.withPanelLock { !reader.editorContextLocked(state: $0).supportsPressAndHold })
         let recorder = TerminalPanelEventRecorder()
@@ -184,19 +238,23 @@ extension TerminalPromptInputPanelTests {
             .character("q"),
             .character("Q"),
             .character("x"),
-            .paste(" yz"),
+            .character("/"),
+            .paste(" pasted text\nsecond line"),
             .backspace,
+            .delete,
             .left,
-            .character("!"),
-            .right
+            .right,
+            .tab,
+            .clearDraft,
+            .toggleAccessMode,
+            .toggleSharedChatReader,
+            .newline,
+            .enter
         ]
 
         for key in keys {
             await reader.handlePanelKey(key, timestampMilliseconds: 100, onEvent: recorder.onEvent)
         }
-        #expect(reader.withPanelLock { String($0.panelBuffer) } == "qQx !y")
-        #expect(reader.withPanelLock { $0.panelCursorIndex } == 6)
-
         // A held vowel would open the accent picker in a plain prompt.
         for timestamp in [UInt64(1_000), 1_500, 1_550, 1_600, 1_650] {
             await reader.handlePanelKey(
@@ -205,26 +263,34 @@ extension TerminalPromptInputPanelTests {
                 onEvent: recorder.onEvent
             )
         }
-        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
 
-        await reader.handlePanelKey(.enter, timestampMilliseconds: 2_000, onEvent: recorder.onEvent)
-
-        let line = "qQx !yaaaaa"
         #expect(recorder.detailActions.withLock { $0 }.isEmpty)
-        #expect(
-            recorder.otherEvents.withLock { $0 }
-                == [String(describing: TerminalPromptInputEvent.submitted(line))]
-        )
-        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
-        #expect(reader.withPanelLock { $0.history.last } == line)
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "draft")
+        #expect(reader.withPanelLock { $0.panelCursorIndex } == 2)
+        #expect(reader.withPanelLock { $0.history } == ["earlier"])
+        #expect(reader.withPanelLock { $0.historyIndex } == nil)
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
         // The detail is still open: the routing is the chat loop's to change.
         #expect(reader.withPanelLock { $0.panelSubAgentDetailMode } == .detail)
+
+        // Its keys still reach the panel.
+        await reader.handlePanelKey(.pageDown, onEvent: recorder.onEvent)
+        #expect(recorder.detailActions.withLock { $0 } == [.pageDown])
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+
+        // Once the panel closes, the same draft takes the keys again.
+        reader.setSubAgentDetailMode(.closed, panelModeOverride: nil)
+        await reader.handlePanelKey(.character("!"), onEvent: recorder.onEvent)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "dr!aft")
     }
 
     /// With the shared-chat reader also open, an agent's detail keeps its
-    /// scrolling keys and the reader receives the message keys it binds.
+    /// scrolling keys and the reader, hidden behind the panel, receives none:
+    /// its message keys are swallowed like any other key the detail does not
+    /// bind.
     @Test
-    func subAgentDetailComesBeforeTheSharedChatReader() async {
+    func anOpenDetailHidesTheSharedChatReaderFromTheKeys() async {
         let reader = TerminalInteractiveLineReader()
         reader.setSharedChatReaderOpen(true)
         reader.setSubAgentDetailMode(.detail, panelModeOverride: TerminalChat.subAgentDetailPanelOverride)
@@ -235,13 +301,8 @@ extension TerminalPromptInputPanelTests {
         }
 
         #expect(recorder.detailActions.withLock { $0 } == [.scrollUp, .top])
-        #expect(
-            recorder.otherEvents.withLock { $0 } == [
-                String(describing: TerminalPromptInputEvent.sharedChatReaderNavigation(.previousMessage)),
-                String(describing: TerminalPromptInputEvent.sharedChatReaderNavigation(.nextMessage))
-            ]
-        )
-        #expect(reader.withPanelLock { String($0.panelBuffer) } == "q")
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
     }
 
     /// `Esc` in the detail only closes it, in the list and in an agent's
@@ -325,12 +386,11 @@ extension TerminalPromptInputPanelTests {
         case .list:
             // `q` closes the list (as its own action) and so does `Esc`.
             #expect(recorder.detailActions.withLock { $0 } == [.closeList, .close])
-            #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
         case .detail, .closed:
-            // `q` is text below an agent's detail; only `Esc` closes it.
+            // `q` is swallowed by an agent's detail; only `Esc` closes it.
             #expect(recorder.detailActions.withLock { $0 } == [.close])
-            #expect(reader.withPanelLock { String($0.panelBuffer) } == "q")
         }
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
     }
 
     /// Closing the detail gives the keys back to the draft, where page keys

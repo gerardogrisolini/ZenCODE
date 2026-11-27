@@ -127,18 +127,13 @@ extension TerminalStatusBar {
                 return
             }
             state.isResizePending = false
-            // The compact header alone is not a reader viewport. Collapse the
-            // dock before repainting whenever the new geometry has no payload
-            // row, then let the runtime FIFO close its matching input/buffer
-            // reader states. Keeping the dock preserves its unread badge.
-            if var dock = state.sharedChatReaderDock, dock.isExpanded {
-                let payloadRows = sharedChatReaderViewportRowsLocked(state: &state)
-                if payloadRows < 1 {
-                    dock.isExpanded = false
-                    state.sharedChatReaderDock = dock
-                    collapsedObservationID = state.sharedChatReaderObservationID
-                    collapseHandler = sharedChatReaderCollapseHandler
-                }
+            if state.isFooterHidden {
+                // Nothing of the reader is on screen: showing the layout again
+                // checks it against the geometry of that moment.
+                state.resizedWhileFooterHidden = true
+            } else if let observationID = collapseUnpaintableSharedChatReaderLocked(state: &state) {
+                collapsedObservationID = observationID
+                collapseHandler = sharedChatReaderCollapseHandler
             }
             TerminalResizeCoordinator.shared.publishLayout()
             renderLocked(state: &state)
@@ -146,6 +141,22 @@ extension TerminalStatusBar {
         if let collapsedObservationID {
             await collapseHandler?(collapsedObservationID)
         }
+    }
+
+    /// The compact header alone is not a reader viewport: collapses an
+    /// expanded dock that the current geometry leaves without a payload row,
+    /// keeping its unread badge, so that the runtime FIFO can close its
+    /// matching input and buffer reader states. Returns the observation that
+    /// owns the collapsed dock, for the caller to notify once its batch is
+    /// written; `nil` when nothing collapsed or no observation owns the dock.
+    func collapseUnpaintableSharedChatReaderLocked(state: inout State) -> UUID? {
+        guard var dock = state.sharedChatReaderDock, dock.isExpanded,
+              sharedChatReaderViewportRowsLocked(state: &state) < 1 else {
+            return nil
+        }
+        dock.isExpanded = false
+        state.sharedChatReaderDock = dock
+        return state.sharedChatReaderObservationID
     }
 
     static func currentTerminalGeometry(

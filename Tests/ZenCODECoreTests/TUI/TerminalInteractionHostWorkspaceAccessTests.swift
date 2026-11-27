@@ -2,8 +2,9 @@
 //  TerminalInteractionHostWorkspaceAccessTests.swift
 //  ZenCODE
 //
-//  The terminal's workspace access request and the panels above the prompt
-//  (the `/subagent` detail and the `/artifacts` panel): a panel closes only
+//  The terminal's workspace access request and the modal panels (the
+//  `/subagent` detail and the `/artifacts` panel, which hide the bottom
+//  layout): a panel closes only
 //  when the question is really asked. The terminal reads
 //  the trust from `UserDefaults.standard`, so the suite is serialized and
 //  removes the key it records.
@@ -44,8 +45,8 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         )
     }
 
-    /// Opens an agent's detail by hand, as `/subagent` does, on a screen that
-    /// is never installed.
+    /// Opens an agent's detail by hand, as `/subagent` does (the bottom
+    /// layout hidden behind it), on a screen that is never installed.
     private func openDetail(on terminal: TerminalChat) async -> TerminalSubAgentDetailController {
         let session = TerminalModalSession(screen: TerminalPrimaryScreen(output: { _ in }))
         let controller = TerminalSubAgentDetailController(environment: .init(
@@ -65,11 +66,13 @@ struct TerminalInteractionHostWorkspaceAccessTests {
             .detail,
             panelModeOverride: TerminalChat.subAgentDetailPanelOverride
         )
+        await terminal.statusBar.setFooterHidden(true)
         return controller
     }
 
     /// Opens the `/artifacts` panel on a file's diff by hand, as `/artifacts`
-    /// does, on a screen that is never installed.
+    /// does (the bottom layout hidden behind it), on a screen that is never
+    /// installed.
     private func openArtifacts(on terminal: TerminalChat) async -> TerminalArtifactsPanelController {
         let session = TerminalModalSession(screen: TerminalPrimaryScreen(output: { _ in }))
         let empty = ChatFileArtifactSnapshot(turns: [], activeTurnNumber: nil)
@@ -89,7 +92,13 @@ struct TerminalInteractionHostWorkspaceAccessTests {
             .detail,
             panelModeOverride: TerminalChat.artifactsDetailPanelOverride
         )
+        await terminal.statusBar.setFooterHidden(true)
         return controller
+    }
+
+    /// Whether the terminal's bottom layout is hidden behind a panel.
+    private func isFooterHidden(_ terminal: TerminalChat) async -> Bool {
+        await terminal.statusBar.state.isFooterHidden
     }
 
     /// A folder trusted already is granted without a question, so the open
@@ -120,10 +129,12 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         #expect(terminal.detailPanel?.kind == .subAgent)
         #expect(!controller.isStopped)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .detail)
+        #expect(await isFooterHidden(terminal))
 
         await terminal.closeDetailPanel(reason: .dismissed)
         #expect(terminal.detailPanel?.kind != .subAgent)
         #expect(!terminal.isDetailPanelOpen)
+        #expect(!(await isFooterHidden(terminal)))
     }
 
     /// The `/artifacts` panel closes as the `/subagent` detail does: a
@@ -155,6 +166,7 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         #expect(!controller.isStopped)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .detail)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelOverlayOverride } == TerminalChat.artifactsDetailPanelOverride)
+        #expect(await isFooterHidden(terminal))
 
         // The panel's own close (Esc) runs the one teardown.
         await controller.handle(.close)
@@ -162,10 +174,12 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         #expect(!terminal.isDetailPanelOpen)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .closed)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelOverlayOverride } == nil)
+        #expect(!(await isFooterHidden(terminal)))
     }
 
     /// A modal input (a menu, a line prompt) closes whichever panel is open,
-    /// and opening one panel replaces the other through the same teardown.
+    /// and shows the bottom layout again before the menu draws above it;
+    /// opening one panel replaces the other through the same teardown.
     @Test
     func aModalInputClosesEitherPanel() async throws {
         let terminal = try makeTerminal()
@@ -173,12 +187,14 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         await terminal.closeDetailPanelForModalInput()
         #expect(artifacts.isStopped)
         #expect(!terminal.isDetailPanelOpen)
+        #expect(!(await isFooterHidden(terminal)))
 
         let detail = await openDetail(on: terminal)
         await terminal.closeDetailPanelForModalInput()
         #expect(detail.isStopped)
         #expect(!terminal.isDetailPanelOpen)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .closed)
+        #expect(!(await isFooterHidden(terminal)))
 
         // The session ending closes the panel too; a second close does nothing.
         let next = await openArtifacts(on: terminal)
@@ -186,6 +202,7 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         await terminal.closeDetailPanel(reason: .sessionEnded)
         #expect(next.isStopped)
         #expect(!terminal.isDetailPanelOpen)
+        #expect(!(await isFooterHidden(terminal)))
     }
 }
 #endif

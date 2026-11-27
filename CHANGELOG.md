@@ -10,6 +10,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Terminal: the `/subagent` and `/artifacts` panels are now modal and take the
+  whole screen, as the sub-agent tabs of the macOS app do. While one is open,
+  in its list and in its detail, the shared-chat dock, the input panel, and the
+  status bar are hidden and their rows go to the panel; they come back whole
+  when it closes, for the geometry of that moment. In an agent's or a file's
+  detail the panel now takes every key, like its list: the keys it does not
+  bind (text, `q`, `Enter`, `Tab`, a paste, `Ctrl+Y`, `Ctrl+G`) do nothing, so
+  nothing is typed, completed, or sent behind it, and the draft comes back as
+  it was. The keys of the mode move from the input panel's mode row to the
+  left of the panel's bottom border, next to the `rows a–b/n` range, and the
+  border shows `Chat: N new` while shared-chat messages are unread; messages
+  that arrive while the panel is open stay unread.
+
 ### Fixed
 
 - ACP: a `session/load` or `session/resume` of a session id the process does not

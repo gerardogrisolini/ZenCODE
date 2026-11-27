@@ -223,6 +223,8 @@ final class DetailHarness {
     let resize = DetailResizeSignal()
     var viewport: (rows: Int, columns: Int) = (rows: 20, columns: 60)
     var isCancelled = false
+    /// The unread shared-chat messages the panel's bottom border shows.
+    var unreadSharedChatCount = 0
     private(set) var frames: [[String]] = []
     private(set) var closeReasons: [TerminalSubAgentDetailController.CloseReason] = []
     /// Whether the task that reported each close was cancelled.
@@ -249,6 +251,7 @@ final class DetailHarness {
                 self.closedWhileCancelled.append(Task.isCancelled)
             },
             modeDidChange: { self.modeChanges.append($0) },
+            sharedChatUnreadCount: { self.unreadSharedChatCount },
             modelTitleResolver: modelTitleResolver,
             standardErrorIsTerminal: false,
             sleep: gate.sleep,
@@ -380,7 +383,7 @@ struct TerminalSubAgentDetailControllerTests {
         await waitUntil("the transcript is read") { controller.panel.availability == .available }
         #expect(harness.feed.reads == ["agent-1"])
         #expect(controller.panel.bodyRows == rows(["FIRST_BLOCK"]))
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         #expect(harness.frames.last?.count == 20)
 
         // The stream's first value repeats the snapshot the agent opened
@@ -411,7 +414,7 @@ struct TerminalSubAgentDetailControllerTests {
         #expect(controller.transcriptReadCount == 3)
         #expect(controller.snapshot?.status == .idle)
         #expect(controller.panel.headerRows == header(ended))
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         controller.stop()
     }
 

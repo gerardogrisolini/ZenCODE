@@ -25,9 +25,9 @@ extension TerminalChat {
         case choosing([DirectSubAgentRuntime.AgentSnapshot])
     }
 
-    /// The input panel's mode while the detail shows an agent. It is no
-    /// overlay of the prompt: below the detail the operator keeps typing,
-    /// completing and sending the draft.
+    /// The input panel's mode while the detail shows an agent. The panel is
+    /// modal and hides the input panel, so its help is drawn in the bottom
+    /// border of the detail (``TerminalDetailPanel/Kind/panelModeOverride(for:detailReturnsToList:)``).
     nonisolated static let subAgentDetailPanelOverride = TerminalPanelModeOverride(
         modeText: "Sub-agent",
         helpText: "↑↓ PgUp PgDn Home End scroll · Esc close"
@@ -41,8 +41,7 @@ extension TerminalChat {
         helpText: "↑↓ PgUp PgDn Home End scroll · Esc back"
     )
 
-    /// The input panel's mode while the detail lists the agents in progress,
-    /// which own every key of the panel until one is opened.
+    /// The input panel's mode while the detail lists the agents in progress.
     nonisolated static let subAgentListPanelOverride = TerminalPanelModeOverride(
         modeText: "Sub-agent",
         helpText: "↑↓ choose · Enter open · Esc close"
@@ -111,18 +110,21 @@ extension TerminalChat {
     /// `/subagent [name|id]`: opens the live detail of a sub-agent in
     /// progress, directly when the argument names one or when only one is in
     /// progress, otherwise from the list of the agents in progress. It
-    /// replaces a panel already open (a detail, or the `/artifacts` panel).
+    /// replaces a panel already open (a detail, or the `/artifacts` panel),
+    /// keeping the bottom layout hidden from one panel to the other.
     ///
     /// The detail needs the interactive layout (``detailPanelScreen()``);
     /// otherwise, and when no sub-agent is in progress, it writes why and
     /// opens nothing. A failed match leaves an open panel as it is.
     ///
-    /// The agent list owns every key of the panel. An agent's detail takes
-    /// only the keys that scroll it and `Esc`, which goes back to the list when
-    /// the detail was opened from it and closes the panel otherwise: the
-    /// prompt keeps the other keys, so prompts and `@` mentions are typed and
-    /// sent while it stays open, and a command goes on with it open unless it
-    /// opens a menu or a line prompt
+    /// The panel is modal, in the list and in an agent's detail alike: it
+    /// hides the bottom layout (the shared-chat dock, the input panel and the
+    /// status bar) and owns every key but end-of-input, swallowing those it
+    /// does not bind, so the draft stays as it was until the panel closes.
+    /// An agent's detail binds the keys that scroll it and `Esc`, which goes
+    /// back to the list when the detail was opened from it and closes the
+    /// panel otherwise. The generation, the shared chat and the queued
+    /// prompts go on meanwhile; a menu or a line prompt closes the panel first
     /// (``closeDetailPanelForModalInput()``).
     func handleSubAgentCommand(_ command: String) async {
         guard let screen = detailPanelScreen() else {
@@ -151,7 +153,7 @@ extension TerminalChat {
             target = .choosing(pending)
         }
 
-        await closeDetailPanel(reason: .replaced)
+        await closeDetailPanel(reason: .replaced, keepsFooterHidden: true)
         await openDetailPanel(.subAgent(target), on: screen)
     }
 
@@ -183,6 +185,7 @@ extension TerminalChat {
             modeDidChange: { [weak self] isChoosing in
                 await self?.detailPanelModeDidChange(isChoosing: isChoosing, session: session)
             },
+            sharedChatUnreadCount: { [weak self] in self?.sharedChatUnreadCount ?? 0 },
             modelTitleResolver: subAgentModelTitleResolver(),
             standardErrorIsTerminal: AgentOutput.standardErrorIsTerminal
         ))

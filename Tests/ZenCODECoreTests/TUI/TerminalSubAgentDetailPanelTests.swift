@@ -237,6 +237,17 @@ struct TerminalSubAgentDetailPanelTests {
             let lines = panel.frameLines(rows: rows, columns: columns)
             #expect(lines.count == rows)
             #expect(lines.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
+            // The badge and the help never change the frame's size.
+            for border in [
+                TerminalSubAgentDetailPanel.BorderStatus(help: TerminalChat.subAgentDetailPanelOverride.helpText),
+                .init(unreadSharedChatCount: 12, help: TerminalChat.subAgentListPanelOverride.helpText),
+                .init(unreadSharedChatCount: 1)
+            ] {
+                let framed = panel.frameLines(rows: rows, columns: columns, border: border)
+                #expect(framed.count == rows)
+                #expect(framed.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
+                #expect(Array(framed.dropLast()) == Array(lines.dropLast()))
+            }
         }
     }
 
@@ -295,6 +306,103 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(plain(panel.frameLines(rows: 21, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
         panel.replace(headerRows: [], bodyRows: [], frameRows: 21)
         #expect(plain(panel.frameLines(rows: 21, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
+    }
+
+    // MARK: - Bottom border: help, badge and indicator
+
+    /// The bottom border of `columns` with `text` on its left and
+    /// `indicator` on its right, as the panel draws it.
+    private func bottomBorder(_ text: String?, indicator: String?, columns: Int) -> String {
+        let leading = text.map { "─ " + $0 + " " } ?? ""
+        let trailing = indicator.map { $0 + "─" } ?? ""
+        let fill = columns - 2 - TerminalANSIText.visibleWidth(leading) - TerminalANSIText.visibleWidth(trailing)
+        return "╰" + leading + String(repeating: "─", count: fill) + trailing + "╯"
+    }
+
+    /// The help of the mode goes on the left of the bottom border, the
+    /// unread badge before it, and the indicator stays on the right.
+    @Test func theBottomBorderSaysTheBadgeAndTheHelpLeftOfTheIndicator() {
+        let help = TerminalChat.subAgentDetailPanelOverride.helpText
+        var panel = TerminalSubAgentDetailPanel()
+        panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 21)
+
+        let withHelp = plain(panel.frameLines(rows: 21, columns: 70, border: .init(help: help))).last
+        #expect(withHelp == "╰─ ↑↓ PgUp PgDn Home End scroll · Esc close " + String(repeating: "─", count: 9)
+            + " rows 66–84/84 ─╯")
+
+        let withBadge = plain(panel.frameLines(
+            rows: 21, columns: 90, border: .init(unreadSharedChatCount: 2, help: help)
+        )).last
+        #expect(withBadge == bottomBorder("Chat: 2 new · " + help, indicator: " rows 66–84/84 ", columns: 90))
+        #expect(withBadge?.hasPrefix("╰─ Chat: 2 new · ↑↓ PgUp") == true)
+
+        // No unread message, no badge; nothing to say, the plain border.
+        #expect(plain(panel.frameLines(rows: 21, columns: 90, border: .init(unreadSharedChatCount: 0, help: help))).last
+            == bottomBorder(help, indicator: " rows 66–84/84 ", columns: 90))
+        #expect(plain(panel.frameLines(rows: 21, columns: 90, border: .init())).last
+            == plain(panel.frameLines(rows: 21, columns: 90)).last)
+
+        // Without an indicator the text stays on the left of a plain rule.
+        panel.replace(headerRows: [], bodyRows: numberedRows(5), frameRows: 21)
+        #expect(plain(panel.frameLines(rows: 21, columns: 60, border: .init(unreadSharedChatCount: 1, help: help))).last
+            == bottomBorder("Chat: 1 new · " + help, indicator: nil, columns: 60))
+
+        // The list says its own keys, next to its `a–b/n` indicator.
+        let list = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries(30), focusedIndex: 0))
+        let listHelp = TerminalChat.subAgentListPanelOverride.helpText
+        #expect(plain(list.frameLines(rows: 7, columns: 60, border: .init(help: listHelp))).last
+            == bottomBorder("↑↓ choose · Enter open · Esc close", indicator: " 1–5/30 ", columns: 60))
+    }
+
+    /// The indicator wins the width; the text takes what is left with one
+    /// `─` on each side: first the help drops its segments from the left, so
+    /// `Esc close` is the last to go, then the help goes, then the badge.
+    @Test(arguments: [
+        (76, "Chat: 3 new · ↑↓ PgUp PgDn Home End scroll · Esc close"),
+        (75, "Chat: 3 new · Esc close"),
+        (45, "Chat: 3 new · Esc close"),
+        (44, "Chat: 3 new"),
+        (33, "Chat: 3 new"),
+        (32, "Esc close"),
+        (31, "Esc close"),
+        (30, nil),
+        (19, nil),
+    ] as [(Int, String?)])
+    func theIndicatorWinsTheWidthAndTheTextShortensByPriority(columns: Int, text: String?) {
+        var panel = TerminalSubAgentDetailPanel()
+        panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 21)
+        let border = TerminalSubAgentDetailPanel.BorderStatus(
+            unreadSharedChatCount: 3,
+            help: TerminalChat.subAgentDetailPanelOverride.helpText
+        )
+        let bottom = plain(panel.frameLines(rows: 21, columns: columns, border: border)).last
+        #expect(bottom == bottomBorder(text, indicator: " rows 66–84/84 ", columns: columns))
+        #expect(bottom.map(TerminalANSIText.visibleWidth) == columns)
+    }
+
+    /// Without the indicator (it does not fit, or the body does) the text
+    /// has the whole border; the list's help shortens the same way.
+    @Test func withoutTheIndicatorTheTextTakesTheWholeBorder() {
+        let listHelp = TerminalChat.subAgentListPanelOverride.helpText
+        typealias Panel = TerminalSubAgentDetailPanel
+        #expect(Panel.borderText(.init(help: listHelp), width: 40) == "↑↓ choose · Enter open · Esc close")
+        #expect(Panel.borderText(.init(help: listHelp), width: 33) == "Enter open · Esc close")
+        #expect(Panel.borderText(.init(help: listHelp), width: 21) == "Esc close")
+        #expect(Panel.borderText(.init(help: listHelp), width: 8) == nil)
+        #expect(Panel.borderText(.init(unreadSharedChatCount: 4, help: listHelp), width: 20) == "Chat: 4 new")
+        #expect(Panel.borderText(.init(unreadSharedChatCount: 4), width: 11) == "Chat: 4 new")
+        #expect(Panel.borderText(.init(unreadSharedChatCount: 4), width: 10) == nil)
+        #expect(Panel.borderText(.init(help: "  "), width: 40) == nil)
+        #expect(Panel.borderText(.init(), width: 40) == nil)
+        #expect(Panel.borderText(.init(help: listHelp), width: 0) == nil)
+
+        // An indicator wider than the frame is dropped, as before, and the
+        // badge takes the room.
+        var panel = TerminalSubAgentDetailPanel()
+        panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 21)
+        let border = TerminalSubAgentDetailPanel.BorderStatus(unreadSharedChatCount: 3)
+        #expect(plain(panel.frameLines(rows: 21, columns: 18, border: border)).last
+            == bottomBorder("Chat: 3 new", indicator: nil, columns: 18))
     }
 
     /// The width of `🛠️` (`U+1F6E0 U+FE0F`) depends on the terminal, so every

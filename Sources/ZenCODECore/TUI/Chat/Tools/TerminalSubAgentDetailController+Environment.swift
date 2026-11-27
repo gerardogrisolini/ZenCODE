@@ -34,6 +34,10 @@ extension TerminalSubAgentDetailController {
         /// Called when the panel moves between the agent list
         /// (`isChoosing`) and an agent's detail.
         var modeDidChange: @ChatSessionActor (_ isChoosing: Bool) async -> Void
+        /// The shared-chat messages not read yet, read at every frame for the
+        /// badge of the bottom border
+        /// (``TerminalSubAgentDetailPanel/BorderStatus/unreadSharedChatCount``).
+        var sharedChatUnreadCount: @ChatSessionActor () -> Int
         /// The title of a model identifier, for the model rows of the header
         /// and of the agent list.
         var modelTitleResolver: (String) -> String
@@ -58,6 +62,7 @@ extension TerminalSubAgentDetailController {
             isCancelled: @escaping @ChatSessionActor () -> Bool,
             onClosed: @escaping @ChatSessionActor (CloseReason) async -> Void,
             modeDidChange: @escaping @ChatSessionActor (_ isChoosing: Bool) async -> Void = { _ in },
+            sharedChatUnreadCount: @escaping @ChatSessionActor () -> Int = { 0 },
             modelTitleResolver: @escaping (String) -> String = { $0 },
             standardErrorIsTerminal: Bool,
             sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
@@ -75,6 +80,7 @@ extension TerminalSubAgentDetailController {
             self.isCancelled = isCancelled
             self.onClosed = onClosed
             self.modeDidChange = modeDidChange
+            self.sharedChatUnreadCount = sharedChatUnreadCount
             self.modelTitleResolver = modelTitleResolver
             self.standardErrorIsTerminal = standardErrorIsTerminal
             self.updateInterval = updateInterval

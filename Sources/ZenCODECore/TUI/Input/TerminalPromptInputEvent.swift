@@ -13,7 +13,7 @@ public enum TerminalPromptInputEvent: Sendable {
     case sharedChatReaderNavigation(TerminalSharedChatReaderAction)
     /// A key the open panel binds, the `/subagent` detail or the `/artifacts`
     /// panel: every key the list binds, or a scrolling key or `Esc` of a
-    /// detail (the others reach the draft as usual). The reader never
+    /// detail (the panel is modal and swallows the others). The reader never
     /// interprets it: the panel's controller decides, for example, whether
     /// `scrollUp` moves the list focus or the transcript.
     case subAgentDetail(TerminalSubAgentDetailAction)

@@ -338,6 +338,34 @@ struct TerminalSharedChatReaderDockTests {
         #expect(buffer.unreadCount == 0)
     }
 
+    /// An open reader hidden behind a `/subagent` or `/artifacts` panel
+    /// consumes nothing: when its selection falls out of the bounded
+    /// history, which consumes every arrival in a visible reader, the
+    /// selection still follows the dock to the newest message, but the
+    /// arrivals stay unread.
+    @Test
+    func aHiddenReaderLeavesEveryArrivalUnread() {
+        var visible = TerminalSharedChatReadingBuffer()
+        visible.append([message(1)])
+        visible.openReader()
+        #expect(visible.unreadCount == 0)
+        var hidden = visible
+        // One more message than the history keeps: the selected one leaves.
+        let arrivals = (2...(TerminalSharedChatReadingBuffer.capacity + 1)).map(message)
+
+        visible.append(arrivals)
+        hidden.append(arrivals, isReaderVisible: false)
+
+        #expect(visible.unreadCount == 0)
+        #expect(hidden.unreadCount == arrivals.count)
+        #expect(hidden.isReaderOpen)
+        #expect(hidden.selectedMessageID == arrivals.last?.id)
+        #expect(hidden.selectedMessageID == visible.selectedMessageID)
+        // A replay still changes nothing.
+        #expect(hidden.append(arrivals, isReaderVisible: false).isEmpty)
+        #expect(hidden.unreadCount == arrivals.count)
+    }
+
     @Test
     func openingReaderStartsAtFirstUnreadMessageAndConsumesOnlyVisibleMessage() {
         let messages = (21...23).map(message)

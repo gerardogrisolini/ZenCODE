@@ -61,7 +61,7 @@ extension TerminalSubAgentDetailControllerTests {
         #expect(controller.panel.headerRows.isEmpty)
         #expect(controller.panel.bodyRows.isEmpty)
         #expect(controller.panel.title == TerminalSubAgentDetailPanel.subAgentTitle)
-        let frame = controller.panel.frameLines(rows: 20, columns: 60)
+        let frame = controller.panel.frameLines(rows: 20, columns: 60, border: controller.border)
         #expect(harness.frames.last == frame)
         #expect(Array(bodyContents(frame).prefix(8)) == [
             "  worker",

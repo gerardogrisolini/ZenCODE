@@ -113,6 +113,10 @@ extension TerminalChat {
         // affect transcripts or snapshots.
         var sharedChatReadingBuffer = TerminalSharedChatReadingBuffer()
         var isSharedChatReaderOpen = false
+        // An open `/subagent` or `/artifacts` panel hides the dock and shows
+        // the unread count in its own border: it reads this buffer, the one
+        // of the room the loop observes now.
+        sharedChatUnreadCountReader = { sharedChatReadingBuffer.unreadCount }
         // Readable mention handles for the current roster (handle → participant
         // id). Refreshed whenever the participant list changes so the parser
         // always routes by the latest stable id behind a readable `@handle`.
@@ -139,6 +143,7 @@ extension TerminalChat {
             sharedChatObservation.task.cancel()
             eventQueue.finish()
             loopEventQueue = nil
+            sharedChatUnreadCountReader = nil
             if let promptReservation {
                 sessionHost.releasePrompt(promptReservation)
             }
@@ -220,6 +225,7 @@ extension TerminalChat {
             )
             sharedChatReadingBuffer = TerminalSharedChatReadingBuffer()
             isSharedChatReaderOpen = false
+            sharedChatUnreadCountDidChange()
             // The retired room's messages are never announced in the new one,
             // and an announcement of its being read stops here.
             await voiceSession.targetDidChange(announcingMessagesSince: voiceAnnouncementsSince)
@@ -540,7 +546,8 @@ extension TerminalChat {
         }
 
         /// Repaints the dock from the reading buffer, e.g. after new messages
-        /// or once voice mode consumed one.
+        /// or once voice mode consumed one, and the unread badge of an open
+        /// panel, which hides the dock.
         func refreshSharedChatDock() async {
             let entries = await sharedChatReaderEntries()
             await withBottomOverlayTransition {
@@ -551,6 +558,7 @@ extension TerminalChat {
                     observationID: sharedChatObservation.observation.id
                 )
             }
+            sharedChatUnreadCountDidChange()
         }
 
         // What voice mode asks of this loop (see `TerminalVoiceModeHost`):
@@ -620,6 +628,10 @@ extension TerminalChat {
                     await writeAccessModeChangeMessage(accessMode)
                     await interactiveReader.refreshPanel()
                 case .toggleSharedChatReaderRequested:
+                    // A `Ctrl+Y` typed ahead of an opening panel, which hides
+                    // the reader and owns the keys, changes nothing: opening
+                    // the reader would consume an unread message unseen.
+                    guard !isDetailPanelOpen else { continue }
                     let entries = await sharedChatReaderEntries()
                     // The dock is rendered by the status bar in the panel's
                     // reserved rows; generation and the normal input loop keep running.
@@ -658,7 +670,9 @@ extension TerminalChat {
                     isSharedChatReaderOpen = true
                     interactiveReader.setSharedChatReaderOpen(true)
                 case let .sharedChatReaderNavigation(action):
-                    guard isSharedChatReaderOpen else { continue }
+                    // Typed ahead of an opening panel: the hidden reader does
+                    // not move, and consumes no unread message unseen.
+                    guard isSharedChatReaderOpen, !isDetailPanelOpen else { continue }
                     await withBottomOverlayTransition {
                         let unreadCountBeforeNavigation = sharedChatReadingBuffer.unreadCount
                         sharedChatReadingBuffer.navigate(action)
@@ -776,8 +790,12 @@ extension TerminalChat {
             case let .sharedChatMessages(_, messages):
                 // Turn starts arrive as a separate Core auto-trigger. The reader
                 // buffer deduplicates by identity, so replays never update the dock
-                // or its unread counter twice.
-                let newMessages = sharedChatReadingBuffer.append(messages)
+                // or its unread counter twice. While a panel hides the reader
+                // the arrivals stay unread, even for an expanded reader.
+                let newMessages = sharedChatReadingBuffer.append(
+                    messages,
+                    isReaderVisible: !isDetailPanelOpen && !isOpeningDetailPanel
+                )
                 guard !newMessages.isEmpty else { continue }
                 await refreshSharedChatDock()
                 await refreshSharedChatPanelSuggestions()

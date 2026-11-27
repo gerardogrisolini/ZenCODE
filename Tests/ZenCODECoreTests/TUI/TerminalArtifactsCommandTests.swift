@@ -59,16 +59,17 @@ struct TerminalArtifactsCommandTests {
     }
 
     /// Opens the `/artifacts` panel by hand, as `/artifacts` does, on a
-    /// screen that is never installed.
+    /// screen that is never installed; `frames` records what it presents.
     private func openArtifacts(
         on terminal: TerminalChat,
+        frames: PresentedFrames = PresentedFrames(),
         snapshot: @escaping @ChatSessionActor () async -> ChatFileArtifactSnapshot
     ) -> TerminalArtifactsPanelController {
         let session = TerminalModalSession(screen: TerminalPrimaryScreen(output: { _ in }))
         let controller = TerminalArtifactsPanelController(environment: .init(
             snapshot: snapshot,
             viewport: { (rows: 20, columns: 60) },
-            present: { _ in },
+            present: { frames.lines = $0 },
             isCancelled: { false },
             onClosed: { [weak terminal] reason in
                 await terminal?.closeDetailPanel(reason: reason)
@@ -198,10 +199,11 @@ struct TerminalArtifactsCommandTests {
     // MARK: - Panel keys
 
     /// Esc in the diff of a file picked from the list goes back to the list,
-    /// and the input panel's mode and help follow each step; Esc in the list
+    /// and the help of the panel's bottom border follows each step (so does
+    /// the input panel's mode, hidden behind the panel); Esc in the list
     /// closes the panel.
     @Test
-    func escInTheDiffGoesBackToTheListAndTheInputPanelFollows() async throws {
+    func escInTheDiffGoesBackToTheListAndTheHelpFollows() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let terminal = try makeTerminal(directory, renderer: makeRenderer())
@@ -212,7 +214,8 @@ struct TerminalArtifactsCommandTests {
             ],
             activeTurnNumber: nil
         )
-        let controller = openArtifacts(on: terminal) { snapshot }
+        let frames = PresentedFrames()
+        let controller = openArtifacts(on: terminal, frames: frames) { snapshot }
         func routing() -> TerminalInteractiveLineReader.SubAgentDetailMode {
             terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode }
         }
@@ -223,10 +226,12 @@ struct TerminalArtifactsCommandTests {
         controller.open(choosing: snapshot)
         #expect(routing() == .list)
         #expect(panelMode() == TerminalChat.artifactsListPanelOverride)
+        #expect(frames.bottomBorder?.hasPrefix("╰─ ↑↓ choose · Enter open · Esc close ─") == true)
 
         await terminal.handleDetailPanelAction(.confirm)
         #expect(routing() == .detail)
         #expect(panelMode() == TerminalChat.artifactsListDetailPanelOverride)
+        #expect(frames.bottomBorder?.hasPrefix("╰─ ↑↓ PgUp PgDn Home End scroll · Esc back ─") == true)
         #expect(controller.entryID == "2:/repo/B.swift")
 
         await terminal.handleDetailPanelAction(.close)
@@ -249,7 +254,7 @@ struct TerminalArtifactsCommandTests {
     }
 
     /// The only file opens directly on its diff, whose Esc closes the panel,
-    /// as the help says.
+    /// as the help in the bottom border says.
     @Test
     func escInTheDiffOfTheOnlyFileClosesThePanel() async throws {
         let directory = try temporaryDirectory()
@@ -259,16 +264,48 @@ struct TerminalArtifactsCommandTests {
             turns: [.init(number: 1, artifacts: [changedFile("Only.swift")])],
             activeTurnNumber: nil
         )
-        let controller = openArtifacts(on: terminal) { snapshot }
+        let frames = PresentedFrames()
+        let controller = openArtifacts(on: terminal, frames: frames) { snapshot }
         await terminal.setDetailPanelMode(.detail, kind: .artifacts)
         controller.open(entryID: "1:/repo/Only.swift", in: snapshot)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelOverlayOverride }
             == TerminalChat.artifactsDetailPanelOverride)
+        #expect(frames.bottomBorder?.hasPrefix("╰─ ↑↓ PgUp PgDn Home End scroll · Esc close ─") == true)
 
         await terminal.handleDetailPanelAction(.close)
         #expect(!terminal.isDetailPanelOpen)
         #expect(controller.isStopped)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .closed)
+    }
+
+    /// The `/artifacts` panel hides the bottom layout as the `/subagent`
+    /// detail does, in its list and in a diff, and a consent request that
+    /// closes it shows the layout again before saying why.
+    @Test
+    func theArtifactsPanelHidesTheBottomLayoutUntilAConsentClosesIt() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let renderer = makeRenderer()
+        let terminal = try makeTerminal(directory, renderer: renderer)
+        let snapshot = ChatFileArtifactSnapshot(
+            turns: [.init(number: 1, artifacts: [changedFile("A.swift"), changedFile("B.swift")])],
+            activeTurnNumber: nil
+        )
+        await terminal.openDetailPanel(
+            .artifacts(snapshot, revision: terminal.fileArtifactsRevision),
+            on: TerminalPrimaryScreen(output: { _ in })
+        )
+        #expect(terminal.detailPanel?.kind == .artifacts)
+        #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .list)
+        #expect(await terminal.statusBar.state.isFooterHidden)
+        await terminal.handleDetailPanelAction(.confirm)
+        #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .detail)
+        #expect(await terminal.statusBar.state.isFooterHidden)
+
+        await terminal.closeDetailPanel(reason: .consent)
+        #expect(!terminal.isDetailPanelOpen)
+        #expect(!(await terminal.statusBar.state.isFooterHidden))
+        #expect(await output(renderer).contains("Artifacts panel closed: a tool asks for consent."))
     }
 
     // MARK: - Presenter

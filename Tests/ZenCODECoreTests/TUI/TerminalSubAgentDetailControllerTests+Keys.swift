@@ -13,6 +13,51 @@ import ToolCore
 @testable import ZenCODECore
 
 extension TerminalSubAgentDetailControllerTests {
+    // MARK: Bottom border
+
+    /// The bottom border carries the keys of the mode (the list's, then the
+    /// detail's `Esc back` once it was opened from the list) and the unread
+    /// shared-chat badge, which ``TerminalSubAgentDetailController/redraw()``
+    /// follows without reading anything; a stopped controller draws nothing.
+    @Test func theBottomBorderCarriesTheHelpOfTheModeAndTheUnreadBadge() async {
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController()
+        func bottom() -> String? {
+            harness.frames.last?.last.map(TerminalANSIText.stripANSI)
+        }
+        controller.open(choosing: [agent("agent-1"), agent("agent-2", name: "reviewer")])
+        #expect(bottom()?.hasPrefix("╰─ ↑↓ choose · Enter open · Esc close ─") == true)
+
+        harness.unreadSharedChatCount = 2
+        let frames = harness.frames.count
+        controller.redraw()
+        #expect(harness.frames.count == frames + 1)
+        #expect(bottom()?.hasPrefix("╰─ Chat: 2 new · ↑↓ choose · Enter open · Esc close ─") == true)
+        #expect(harness.feed.reads.isEmpty)
+
+        await controller.handle(.confirm)
+        #expect(bottom()?.hasPrefix("╰─ Chat: 2 new · ↑↓ PgUp PgDn Home End scroll · Esc back ─") == true)
+        harness.unreadSharedChatCount = 0
+        controller.redraw()
+        #expect(bottom()?.hasPrefix("╰─ ↑↓ PgUp PgDn Home End scroll · Esc back ─") == true)
+
+        controller.stop()
+        let stopped = harness.frames.count
+        controller.redraw()
+        #expect(harness.frames.count == stopped)
+    }
+
+    /// An agent opened directly has no list to go back to: its border says
+    /// `Esc close`.
+    @Test func theDetailOpenedDirectlySaysThatEscCloses() {
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController()
+        controller.open(agentID: "agent-1", snapshot: agent("agent-1"))
+        #expect(harness.frames.last?.last.map(TerminalANSIText.stripANSI)?
+            .hasPrefix("╰─ ↑↓ PgUp PgDn Home End scroll · Esc close ─") == true)
+        controller.stop()
+    }
+
     // MARK: Keys
 
     @Test func theListMovesTheFocusAndEnterOpensTheFocusedAgent() async {
@@ -46,7 +91,7 @@ extension TerminalSubAgentDetailControllerTests {
             [id("agent-1"), profile], [id("agent-2"), profile], [profile], [profile]
         ])
         #expect(focus() == 0)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
 
         await controller.handle(.scrollDown)
         #expect(focus() == 1)
@@ -61,7 +106,7 @@ extension TerminalSubAgentDetailControllerTests {
         await controller.handle(.pageDown)
         await controller.handle(.bottom)
         #expect(focus() == 1)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
 
         // The list reads nothing.
         await settle()
@@ -127,7 +172,7 @@ extension TerminalSubAgentDetailControllerTests {
         ])
 
         // The whole list fits the frame, one blank row between the entries.
-        let frame = controller.panel.frameLines(rows: 20, columns: 60)
+        let frame = controller.panel.frameLines(rows: 20, columns: 60, border: controller.border)
         #expect(harness.frames.last == frame)
         #expect(Array(bodyContents(frame).prefix(11)) == [
             "▸ worker",
@@ -255,7 +300,7 @@ extension TerminalSubAgentDetailControllerTests {
             agent("agent-3", name: "tester", profileName: "Tester")
         ]
         controller.open(choosing: agents)
-        let frame = controller.panel.frameLines(rows: 20, columns: 60)
+        let frame = controller.panel.frameLines(rows: 20, columns: 60, border: controller.border)
         #expect(harness.frames.last == frame)
         let contents = bodyContents(frame)
         #expect(Array(contents.prefix(12)) == [
@@ -328,7 +373,7 @@ extension TerminalSubAgentDetailControllerTests {
             "done",
             "agent: Developer"
         ])
-        let everything = (text + bodyContents(controller.panel.frameLines(rows: 20, columns: 60))).joined(separator: "\n")
+        let everything = (text + bodyContents(controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))).joined(separator: "\n")
         for stale in [
             "RUNNING", "IDLE", "ACTIVE", "running", "idle", "WRITING_THE_PARSER", "swift.build",
             "c:", "p:", "g:", "1.2", "error"

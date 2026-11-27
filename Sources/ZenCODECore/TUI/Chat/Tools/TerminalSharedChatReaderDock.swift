@@ -52,8 +52,17 @@ struct TerminalSharedChatReadingBuffer: Sendable {
     /// newly retained by the reader. The return value lets callers avoid
     /// refreshing an open dock for a replay without coupling this reader's
     /// history to card-rendering deduplication.
+    ///
+    /// `isReaderVisible` is `false` while an open reader is hidden (a
+    /// `/subagent` or `/artifacts` panel hides the bottom layout): the
+    /// automatic move to the newest message still follows the dock, but
+    /// consumes nothing, so every arrival stays unread until the operator
+    /// sees it.
     @discardableResult
-    mutating func append(_ newMessages: [AgentSharedChat.Message]) -> [AgentSharedChat.Message] {
+    mutating func append(
+        _ newMessages: [AgentSharedChat.Message],
+        isReaderVisible: Bool = true
+    ) -> [AgentSharedChat.Message] {
         let appended = newMessages.filter { messageIDs.insert($0.id).inserted }
         guard !appended.isEmpty else { return [] }
         messages.append(contentsOf: appended)
@@ -75,11 +84,13 @@ struct TerminalSharedChatReadingBuffer: Sendable {
         // `TerminalSharedChatReaderDock.replace` selects the newest message
         // when the previous selection fell out of the bounded history. Mirror
         // that fallback here so an automatic move to the last message also
-        // advances the read marker.
+        // advances the read marker, when the reader is on screen.
         guard let selectedMessageID,
               messages.contains(where: { $0.id == selectedMessageID }) else {
             self.selectedMessageID = messages.last?.id
-            markRead()
+            if isReaderVisible {
+                markRead()
+            }
             return appended
         }
         return appended

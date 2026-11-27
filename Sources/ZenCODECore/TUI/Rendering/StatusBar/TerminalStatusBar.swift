@@ -88,6 +88,19 @@ public actor TerminalStatusBar {
         /// always change the frame, are unaffected; this catches identical metric /
         /// git / context-window updates).
         var lastStatusRender: String?
+        /// While `true` the whole bottom layout (the shared-chat dock, the
+        /// input panel and the status) reserves no row and draws nothing,
+        /// while every update still lands in this state; see
+        /// ``TerminalStatusBar/setFooterHidden(_:)``.
+        var isFooterHidden = false
+        /// The screen holds the empty footer of the hidden layout for the
+        /// geometry committed last. Only a new geometry, or a new session of
+        /// the screen, commits it again.
+        var isHiddenFooterCommitted = false
+        /// A resize was handled while the footer was hidden: showing it again
+        /// checks the expanded reader against the new geometry, as the resize
+        /// itself would have.
+        var resizedWhileFooterHidden = false
     }
 
     nonisolated let isEnabled: Bool
@@ -167,7 +180,54 @@ public actor TerminalStatusBar {
             primaryScreen.stop()
             TerminalResizeCoordinator.shared.publishLayout()
             state.lastStatusRender = nil
+            state.isHiddenFooterCommitted = false
             state.isStarted = false
+        }
+    }
+
+    /// Hides, or shows again, the whole bottom layout: the shared-chat dock
+    /// (compact or expanded), the input panel (draft, suggestions and mode
+    /// row) and the status. A `/subagent` or `/artifacts` panel hides it from
+    /// its opening to its teardown, so that the panel takes every row of the
+    /// screen.
+    ///
+    /// While it is hidden the layout reserves no row
+    /// (``reservedRowsForOverlay()`` answers `0`) and draws nothing: the
+    /// screen commits an empty footer once, and again only for a new
+    /// geometry, so that the panel's frame follows a resize. Every update (the
+    /// draft, the dock, the metrics, the spinner, git, a resize) still lands
+    /// in the state, and showing the layout again draws it whole from that
+    /// state, for the geometry of the moment. The status-only cache is
+    /// dropped at both transitions: it describes rows that are not, or no
+    /// longer, on screen.
+    ///
+    /// An expanded reader is never committed while the layout is hidden
+    /// (``expandSharedChatReader(entries:unreadCount:selection:observationID:availableTranscriptGapRows:)``
+    /// answers `false`). When a resize was handled meanwhile, showing the
+    /// layout again collapses an expanded reader that the new geometry leaves
+    /// without a payload row and notifies the collapse handler
+    /// (``setSharedChatReaderCollapseHandler(_:)``), as the resize would have
+    /// done with the layout visible.
+    func setFooterHidden(_ isHidden: Bool) async {
+        var collapsedObservationID: UUID?
+        var collapseHandler: (@Sendable (UUID?) async -> Void)?
+        withOutputBatch {
+            guard state.isFooterHidden != isHidden else { return }
+            state.isFooterHidden = isHidden
+            state.isHiddenFooterCommitted = false
+            state.lastStatusRender = nil
+            if !isHidden, state.resizedWhileFooterHidden {
+                state.resizedWhileFooterHidden = false
+                if let observationID = collapseUnpaintableSharedChatReaderLocked(state: &state) {
+                    collapsedObservationID = observationID
+                    collapseHandler = sharedChatReaderCollapseHandler
+                }
+            }
+            guard state.isStarted else { return }
+            renderLocked(state: &state)
+        }
+        if let collapsedObservationID {
+            await collapseHandler?(collapsedObservationID)
         }
     }
 
@@ -333,7 +393,8 @@ public actor TerminalStatusBar {
             // the geometry the commit below would paint. A pending resize is a
             // known-stale measurement whose render is suppressed. A populated
             // reader therefore needs payload space; an empty reader only needs
-            // the input panel where its compact open state is rendered.
+            // the input panel where its compact open state is rendered. A
+            // hidden bottom layout shows neither.
             let payloadRows = min(
                 sharedChatReaderViewportRowsLocked(state: &state),
                 dock.rows(width: statusBoxContentWidthLocked(state: &state)).count
@@ -341,7 +402,7 @@ public actor TerminalStatusBar {
             let hasVisibleOpenState = entries.isEmpty
                 ? state.inputPanelState != nil
                 : payloadRows >= 1
-            guard state.isStarted, !state.isResizePending, hasVisibleOpenState else {
+            guard state.isStarted, !state.isResizePending, !state.isFooterHidden, hasVisibleOpenState else {
                 state.sharedChatReaderDock = previousDock
                 state.sharedChatReaderObservationID = previousObservationID
                 return false
@@ -579,6 +640,8 @@ public actor TerminalStatusBar {
         )
     }
 
+    /// Rows the bottom layout reserves now; `0` while it is hidden
+    /// (``setFooterHidden(_:)``).
     public func reservedRowsForOverlay() -> Int {
         guard state.isStarted, state.row > 0, state.columns > 0 else {
             return 0
@@ -592,11 +655,15 @@ public actor TerminalStatusBar {
     /// region. Once it has scrolled beyond the top margin, a cursor-up/erase
     /// rewrite cannot distinguish its remaining rows from the transcript and
     /// could continue into this overlay.
+    ///
+    /// The primary screen always keeps its last row out of the region, so a
+    /// hidden bottom layout (``setFooterHidden(_:)``), which reserves no row,
+    /// leaves one row fewer than the whole screen.
     func scrollableOutputRowCapacity() -> Int? {
         guard state.isStarted, state.row > 0, state.columns > 0 else {
             return nil
         }
-        return max(0, state.row - reservedBottomRowsLocked(state: &state))
+        return max(0, state.row - max(1, reservedBottomRowsLocked(state: &state)))
     }
 
 }

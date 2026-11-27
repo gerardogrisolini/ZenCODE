@@ -167,6 +167,8 @@ final class ArtifactsHarness {
     let resize = ArtifactsResizeSignal()
     var viewport: (rows: Int, columns: Int) = (rows: 20, columns: 60)
     var isCancelled = false
+    /// The unread shared-chat messages the panel's bottom border shows.
+    var unreadSharedChatCount = 0
     private(set) var frames: [[String]] = []
     private(set) var closeReasons: [TerminalArtifactsPanelController.CloseReason] = []
     /// Whether the task that reported each close was cancelled.
@@ -190,6 +192,7 @@ final class ArtifactsHarness {
                 self.closedWhileCancelled.append(Task.isCancelled)
             },
             modeDidChange: { self.modeChanges.append($0) },
+            sharedChatUnreadCount: { self.unreadSharedChatCount },
             standardErrorIsTerminal: false,
             sleep: gate.sleep,
             reloadInterval: Self.reloadInterval,
@@ -431,7 +434,7 @@ struct TerminalArtifactsPanelControllerTests {
         #expect(controller.entryID == nil)
         #expect(controller.panel.title == Controller.title)
         #expect(harness.feed.reads == 0)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
 
         let frame = harness.frames[0]
         #expect(frame.count == 20)
@@ -476,7 +479,7 @@ struct TerminalArtifactsPanelControllerTests {
         #expect(controller.panel.headerRows == Controller.headerRows(entry, width: 56, standardErrorIsTerminal: false))
         #expect(controller.panel.bodyRows == body(entry.artifact))
         #expect(controller.panel.scrollOffset == 0)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         #expect(harness.feed.reads == 0)
 
         // In the diff, Enter and the list's `q` belong to the prompt.
@@ -546,7 +549,7 @@ struct TerminalArtifactsPanelControllerTests {
         #expect(controller.panel.scrollOffset == rows.count - 2 * capacity)
         await controller.handle(.top)
         #expect(controller.panel.scrollOffset == 0)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60, border: controller.border))
         // Scrolling never renders the diff again.
         #expect(controller.diffRenderCount == 1)
         controller.stop()
