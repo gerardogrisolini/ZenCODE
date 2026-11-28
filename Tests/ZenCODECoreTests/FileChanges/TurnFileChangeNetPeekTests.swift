@@ -13,7 +13,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite(.serialized)
+@Suite
 struct TurnFileChangeNetPeekTests {
     @Test
     func peekIsTheNetChangeAgainstTheBaselineAfterRepeatedEdits() async throws {

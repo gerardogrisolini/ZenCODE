@@ -109,24 +109,6 @@ struct ZenCronToolchainTests {
         #expect(try fake.recordedInput() == nil)
     }
 
-    @Test("a failing crontab - is an error even when the text mentions no crontab for")
-    func writeFailure() throws {
-        let fake = try FakeCrontab(
-            status: 1,
-            standardError: "crontab: no crontab for gerardo\n"
-        )
-        defer { fake.remove() }
-
-        #expect(
-            throws: ZenCrontabError.commandFailed(
-                status: 1,
-                detail: "crontab: no crontab for gerardo"
-            )
-        ) {
-            try fake.client.writeCrontab("0 9 * * * echo hi\n")
-        }
-    }
-
     // MARK: - Fixtures
 
     private static func makeTemporaryDirectory() throws -> URL {

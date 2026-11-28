@@ -25,7 +25,7 @@ import Testing
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Telegram channel ingress precedence", .serialized, .timeLimit(.minutes(3)))
+@Suite("Telegram channel ingress precedence", .timeLimit(.minutes(3)))
 struct TelegramChannelIngressPrecedenceTests {
     typealias Support = TelegramChannelTestSupport
 

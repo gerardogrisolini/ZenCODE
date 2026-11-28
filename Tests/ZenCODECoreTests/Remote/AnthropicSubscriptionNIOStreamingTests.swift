@@ -14,7 +14,7 @@ import FoundationNetworking
 import Testing
 import Synchronization
 
-@Suite("Anthropic Subscription NIO streaming", .serialized)
+@Suite("Anthropic Subscription NIO streaming")
 struct AnthropicSubscriptionNIOStreamingTests {
     @Test("messages preserves OAuth wire headers, SSE usage and subscription usage headers")
     func messagesStreamsThroughNIOAndPublishesUsage() async throws {

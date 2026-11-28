@@ -19,7 +19,7 @@ import ToolCore
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Terminal chat in a session host", .serialized, .timeLimit(.minutes(2)))
+@Suite("Terminal chat in a session host", .timeLimit(.minutes(2)))
 struct TerminalChatSessionHostTests {
     private struct Environment {
         let root: URL
@@ -319,8 +319,20 @@ struct TerminalChatSessionHostTests {
                     TaskDefinition(id: "new-b", title: "New task B"),
                 ]
             )
-            try await Task.sleep(for: .milliseconds(500))
-            #expect(await terminal.reserveTaskGraphOverviewPublication().revision > observed + 1)
+            // The observer of the new session reserves a publication of its
+            // own. Each reservation of ours moves the counter by one, so the
+            // observer's shows as a revision ahead of ours: poll for it
+            // instead of waiting a fixed delay.
+            let deadline = ContinuousClock.now + .seconds(30)
+            var reservations = 0
+            var revision = observed
+            repeat {
+                revision = await terminal.reserveTaskGraphOverviewPublication().revision
+                reservations += 1
+                if revision > observed + reservations { break }
+                try await Task.sleep(for: .milliseconds(5))
+            } while ContinuousClock.now < deadline
+            #expect(revision > observed + reservations)
 
             await terminal.stopTaskGraphObserver()
             await host.shutdown()

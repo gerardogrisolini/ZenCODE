@@ -52,7 +52,7 @@ import Testing
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Memory embedding A/B (live, opt-in)", .serialized)
+@Suite("Memory embedding A/B (live, opt-in)")
 struct MemoryEmbeddingABLiveTests {
     // MARK: - Queries and relevance
 

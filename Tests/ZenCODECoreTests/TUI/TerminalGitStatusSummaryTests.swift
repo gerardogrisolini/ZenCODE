@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@Suite(.serialized)
+@Suite
 struct TerminalGitStatusSummaryTests {
     @Test("numstat lines count files, additions and deletions; binary files count with no lines")
     func numstatParsing() {

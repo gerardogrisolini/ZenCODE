@@ -131,7 +131,7 @@ struct ZenSubAgentTranscriptProjectionTests {
 }
 
 @MainActor
-@Suite("Sub-agent tab model", .serialized)
+@Suite("Sub-agent tab model")
 struct ZenSubAgentTranscriptModelTests {
     /// A short real sleep: the model never waits for the test.
     private static let quickSleep: @Sendable (Duration) async throws -> Void = { _ in

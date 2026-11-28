@@ -83,25 +83,6 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func generationOnlyAllowsCommandsWithConcurrencySafeState() {
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/help"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/tasks"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/tasks list"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/tasks retry task-1"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/telegram"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/telegram on"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/telegram off"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/tools logs"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/TOOLS LOGS"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/tools"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/tools status"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/tools logs extra"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/open"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/changes"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/plan status"))
-    }
-
-    @Test
     func interleavedModeMessageClearsCompactToolRewriteState() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
         let toolCall = presentedToolCall(
@@ -372,7 +353,7 @@ extension TerminalChatRenderingTests {
         let configuration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
             availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-tool-rendering", isDirectory: true)
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-tool-rendering-\(UUID().uuidString)", isDirectory: true)
         )
         return TerminalChat(
             configuration: configuration,

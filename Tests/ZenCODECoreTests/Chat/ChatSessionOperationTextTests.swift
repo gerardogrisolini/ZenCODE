@@ -4,7 +4,6 @@
 //
 //  The tests of the texts of the session operation notices, as the terminal
 //  wrote them before they moved to the shared notice channel.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation
@@ -15,7 +14,7 @@ import ToolCore
 // MARK: - Texts
 
 /// The channel of the session notices, as the terminal wrote them.
-@Suite("Chat session operation texts", .serialized)
+@Suite("Chat session operation texts")
 struct ChatSessionOperationTextTests {
     private static let savedAt = Date(timeIntervalSince1970: 1_800_000_000)
 

@@ -321,7 +321,7 @@ extension ACPCommandRoutingTests {
             ])
         }
         defer { generation.cancel() }
-        for _ in 0..<500 {
+        for _ in 0..<3_000 {
             if await fixture.backend.isWorkflowSuspended() { break }
             try await Task.sleep(for: .milliseconds(10))
         }

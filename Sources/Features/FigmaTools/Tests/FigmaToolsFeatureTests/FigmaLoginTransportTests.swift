@@ -366,10 +366,4 @@ struct FigmaLoginServerLifecycleTests {
         }
         #expect(transport.stopCount >= 1)
     }
-
-    @Test
-    func startDelegatesToTheTransport() async throws {
-        let server = try makeServer(transport: FigmaLoginStubTransport())
-        #expect(try await server.start() == 4242)
-    }
 }

@@ -13,7 +13,7 @@ import Foundation
 import Testing
 import ZenPackageMetadata
 
-@Suite(.serialized)
+@Suite
 struct CoreSearchToolsMigrationTests {
     private static let searchToolNames: Set<String> = [
         "search.glob",

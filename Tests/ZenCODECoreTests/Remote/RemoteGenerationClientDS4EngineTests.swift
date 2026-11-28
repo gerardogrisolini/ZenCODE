@@ -13,7 +13,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("RemoteGenerationClient DS4 engine", .serialized)
+@Suite("RemoteGenerationClient DS4 engine")
 struct RemoteGenerationClientDS4EngineTests {
     // MARK: - Tool round trip
 

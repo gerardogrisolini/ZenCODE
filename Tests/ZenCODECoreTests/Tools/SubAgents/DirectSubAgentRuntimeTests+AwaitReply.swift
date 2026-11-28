@@ -350,7 +350,7 @@ private struct AwaitReplyFixture {
         participantID: String,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async {
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(30)
         while !(await runtime.sharedChat.hasPendingMessages(
             roomID: "root",
             participantID: participantID

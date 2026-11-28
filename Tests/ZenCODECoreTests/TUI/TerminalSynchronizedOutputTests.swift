@@ -19,7 +19,7 @@ private final class SynchronizedOutputCapture: Sendable {
     var writes: [String] { items.withLock { $0 } }
 }
 
-@Suite("TerminalSynchronizedOutput", .serialized, TerminalBlockingTestScope())
+@Suite("TerminalSynchronizedOutput", TerminalBlockingTestScope())
 struct TerminalSynchronizedOutputTests {
     private final class Owner {}
 

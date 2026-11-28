@@ -43,7 +43,7 @@ extension ChatSessionHostTests {
             let loading = Task { @ChatSessionActor in
                 try await host.loadSavedSession(in: firstSlot, name: "first-name")
             }
-            let deadline = ContinuousClock.now + .seconds(10)
+            let deadline = ContinuousClock.now + .seconds(30)
             while !firstHooks.reached && ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(5))
             }
@@ -82,7 +82,7 @@ private final class ParallelLoadHooks: ChatSessionChannelHooks {
         guard case .savedSessionWillLoad = reason else { return }
         reached = true
         guard hold else { return }
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(30)
         while !release && ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }

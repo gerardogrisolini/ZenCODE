@@ -296,7 +296,7 @@ struct ACPTelegramBridgeFixture {
     /// answered it. When no answer comes within `timeout` the expectation
     /// fails and the bridge is shut down first, which cancels the turn, so a
     /// failing test ends instead of waiting for a turn that cannot finish.
-    func finish(_ turn: Task<Void, Never>, id: Int, timeout: Duration = .seconds(10)) async {
+    func finish(_ turn: Task<Void, Never>, id: Int, timeout: Duration = .seconds(30)) async {
         let answered = await ACPTelegramTestSupport.waitUntil(timeout: timeout) {
             wire.response(id: id) != nil
         }

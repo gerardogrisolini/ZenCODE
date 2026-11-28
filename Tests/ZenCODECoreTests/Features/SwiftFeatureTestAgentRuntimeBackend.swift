@@ -1,94 +1,15 @@
 //
-//  SwiftFeatureRuntimeTests.swift
-//  ZenCODE
+//  SwiftFeatureTestAgentRuntimeBackend.swift
+//  ZenCODECoreTests
 //
-//  Created by Gerardo Grisolini on 30/05/26.
+//  A backend whose turns do nothing: the direct tool-executor tests only need a
+//  contextual sub-agent backend to exist.
 //
 
 import Foundation
 @testable import ZenCODECore
-import Testing
+@testable import ZenCODERuntime
 import ToolCore
-
-extension SwiftFeatureRuntimeTests {
-    @Test
-    func scriptedModelGeneratesBuildsEnablesAndUsesFeature() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-scripted-model-\(UUID().uuidString)", isDirectory: true)
-        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
-        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: workspaceURL,
-            withIntermediateDirectories: true
-        )
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
-        let executor = DirectToolExecutor(
-            outputLimit: 200_000,
-            swiftFeatureRuntime: runtime,
-            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
-        )
-        let scriptedModel = ScriptedFeatureAuthoringModelBackend(
-            toolExecutor: executor
-        )
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in scriptedModel }
-        )
-        let recorder = DirectAgentEventRecorder()
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: "scripted-model-feature-test",
-            modelID: "scripted-model",
-            workingDirectory: workspaceURL,
-            systemPrompt: SystemPromptBuilder.defaultAgentInstructions(),
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: [
-                "feature.scaffold",
-                "feature.validate",
-                "feature.build",
-                "feature.enable",
-                "local.replace",
-                SwiftFeatureRuntime.featurePackageToolsAllowedName
-            ],
-            maxToolRounds: 20
-        )
-
-        let response = try await runner.sendPrompt(
-            configuration: configuration,
-            prompt: "Genera una feature Swift riusabile che inverta il testo e usala con la parola desserts.",
-            attachments: [],
-            onEvent: { event in
-                await recorder.record(event)
-            }
-        )
-
-        let toolNames = await recorder.startedToolNames()
-        let reverseOutput = await recorder.completedOutput(for: "scripted.reverse")
-        let packageURL = featureRootURL
-            .appendingPathComponent("scripted-reverse", isDirectory: true)
-            .appendingPathComponent("Package.swift")
-        let packageFirstLine = try String(
-            contentsOf: packageURL,
-            encoding: .utf8
-        ).components(separatedBy: .newlines).first
-
-        #expect(response.text.contains("scripted.reverse"))
-        #expect(response.text.contains("stressed"))
-        #expect(toolNames == [
-            "feature.scaffold",
-            "local.replace",
-            "feature.validate",
-            "feature.build",
-            "feature.enable",
-            "scripted.reverse"
-        ])
-        #expect(reverseOutput == "stressed")
-        #expect(packageFirstLine == "// swift-tools-version: 6.4")
-    }
-}
 
 actor SwiftFeatureTestAgentRuntimeBackend: AgentRuntimeBackend {
     func createSession(

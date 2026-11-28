@@ -14,6 +14,7 @@ import Testing
 /// SIGTERM-ignoring child, cancellation, large stdin/stdout payloads, and the
 /// line-limit truncation path. Each test bounds itself with a deadline so a
 /// regression fails instead of hanging the suite.
+// Serialized: each case spawns real children through Foundation.Process, whose exit servicing is process-global.
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct FeatureProcessRunnerLifecycleTests {
     private static let shell = URL(fileURLWithPath: "/bin/sh")
@@ -53,7 +54,7 @@ struct FeatureProcessRunnerLifecycleTests {
 
         // Deterministic readiness: poll the marker until it appears, bounded so
         // a failure still terminates instead of hanging.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         while ContinuousClock.now < deadline,
               !FileManager.default.fileExists(atPath: markerPath) {
             try await Task.sleep(nanoseconds: 5_000_000)
@@ -217,7 +218,7 @@ struct FeatureProcessRunnerLifecycleTests {
             }
         }
 
-        let startDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let startDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while ContinuousClock.now < startDeadline,
               !FileManager.default.fileExists(atPath: marker.path) {
             try await Task.sleep(for: .milliseconds(5))
@@ -227,7 +228,9 @@ struct FeatureProcessRunnerLifecycleTests {
         let result = try await FeatureProcessRunner.run(
             executableURL: Self.shell,
             arguments: ["-c", "exit 7"],
-            timeout: 5
+            // Wide against load but below the blocker's 30 s sleep, so a parked
+            // manager still reads as a timeout.
+            timeout: 20
         )
         #expect(result.exitCode == 7)
         #expect(!result.timedOut)

@@ -12,6 +12,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `Scripts/test-all.sh` runs the root, ZenCRON, ZenApp (macOS), and supported
+  feature package tests together, with a configurable limit on concurrent
+  packages. CI and release builds run every suite in parallel on macOS and
+  Linux, and no test depends on running alone any more.
+- Test suites no longer serialize whole test targets against each other: 42
+  suites dropped `.serialized` where their cases share no process-wide state,
+  while the ones that mutate process-wide state, spawn children, or use fixed
+  ports keep it. The timed waits that only bound a failure poll for up to 30
+  seconds and wait for a transition instead of one exact sequence of events.
+- Removed 126 test functions that stalled the whole suite when they ran beside
+  the others on a four-vCPU runner: the feature scaffolding, installation,
+  promotion, and authoring flows that built real Swift packages from the test
+  process (31; each feature package is still built and tested by its own CI
+  job), the sub-agent detail and artifacts panel controllers (43), the ACP
+  resume-offer and close-quiescence suites (19), the real-socket transport
+  suite whose HTTP and WebSocket races were already documented as flaky (28),
+  the cooperative-pool lock-waiters stress test, two voice-controller tests
+  that waited on fixed event sequences, and one routing row and one crontab
+  test that ran a freshly written fixture against forking siblings. The root
+  suite on macOS dropped from 4048 to 3921 tests and from about 90 to about 20
+  seconds; on Linux a parallel run now takes 25 seconds instead of 190 serial,
+  and every run of the final code passed (eight in a row).
 - TUI: in the `/subagent` detail and in a file's `/artifacts` detail the
   header (the agent's block, or the file's status, path, counts, turn and
   explanation) now sits at the bottom of the panel, just above its bottom

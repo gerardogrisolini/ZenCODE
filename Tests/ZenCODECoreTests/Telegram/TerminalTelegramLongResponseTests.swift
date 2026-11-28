@@ -286,7 +286,7 @@ struct TerminalTelegramLongResponseTests {
     }
 
     private static func waitUntil(_ condition: @escaping @Sendable () async -> Bool) async -> Bool {
-        for _ in 0 ..< 500 {
+        for _ in 0 ..< 3_000 {
             if await condition() { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }

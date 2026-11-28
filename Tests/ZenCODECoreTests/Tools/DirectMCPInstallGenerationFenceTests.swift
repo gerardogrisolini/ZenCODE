@@ -8,7 +8,7 @@
   import ToolCore
   @testable import ZenCODECore
 
-  @Suite("Direct MCP install generation fence", .serialized, .timeLimit(.minutes(1)))
+  @Suite("Direct MCP install generation fence", .timeLimit(.minutes(1)))
   struct DirectMCPInstallGenerationFenceTests {
     @Test
     func borrowedInstallSupersedesAnOwnedInstallSuspendedInToolLoading() async throws {

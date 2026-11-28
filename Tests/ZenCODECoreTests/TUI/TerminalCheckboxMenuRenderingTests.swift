@@ -8,7 +8,7 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@Suite(.serialized)
+@Suite
 struct TerminalCheckboxMenuRenderingTests {
     @Test
     func promptKeepsTextWhenResizeRequestsRepaint() {

@@ -5,7 +5,6 @@
 //  Tests of the DS4 setup that persist the optional files and the launch
 //  options of each model and that ask for, decline, run or fail the engine
 //  build and rebuild.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

@@ -111,7 +111,7 @@ struct ChatSlotInteractionHostTests {
     }
 
     private static func waitUntil(_ condition: () async -> Bool) async {
-        for _ in 0 ..< 500 where !(await condition()) {
+        for _ in 0 ..< 3_000 where !(await condition()) {
             try? await Task.sleep(for: .milliseconds(10))
         }
     }

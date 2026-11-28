@@ -123,10 +123,10 @@ enum TelegramChannelTestSupport {
         terminal.loopEventQueue = TerminalChatEventQueue()
     }
 
-    /// Polls `condition` for up to five seconds.
+    /// Polls `condition` for up to thirty seconds (a failure limit, not a property).
     @ChatSessionActor
     static func waitUntil(_ condition: () async -> Bool) async throws {
-        for _ in 0..<500 where !(await condition()) {
+        for _ in 0..<3_000 where !(await condition()) {
             try await Task.sleep(for: .milliseconds(10))
         }
     }

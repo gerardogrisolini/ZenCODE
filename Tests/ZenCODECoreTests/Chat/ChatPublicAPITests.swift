@@ -13,7 +13,7 @@ import Foundation
 import Testing
 import ZenCODECore
 
-@Suite(.serialized)
+@Suite
 struct ChatPublicAPITests {
     @Test("A host app composes a session, runs a command and a turn, and reads the slot's channel state")
     func aHostAppComposesASessionThroughThePublicAPI() async throws {

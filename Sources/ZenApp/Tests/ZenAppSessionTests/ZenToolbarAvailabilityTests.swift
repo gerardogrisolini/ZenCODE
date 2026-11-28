@@ -17,7 +17,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenToolbarAvailabilityTests {
     /// The commands of the toolbar that the window refuses while a line runs:
     /// the buttons, then the items of the Changes menu.

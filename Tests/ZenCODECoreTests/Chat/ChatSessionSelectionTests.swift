@@ -14,7 +14,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Chat session selections", .serialized)
+@Suite("Chat session selections")
 struct ChatSessionSelectionTests {
     typealias Fixtures = ChatTestFixtures
 

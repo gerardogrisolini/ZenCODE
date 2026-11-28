@@ -5,7 +5,6 @@
 //  Tests of the "DS4 models" menu: one model configured, deleted or added on
 //  its own, Esc inside a step and on the menu, Done without models, the
 //  values setup no longer asks, DSpark proposed again and a changed folder.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

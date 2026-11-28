@@ -54,7 +54,7 @@ struct MCPSingleFlightTests {
         _ expected: Int,
         in flight: MCPSingleFlight<Int>
     ) async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         repeat {
             if flight.waiterCount == expected {
                 return true
@@ -90,7 +90,7 @@ struct MCPSingleFlightTests {
 
         #expect(
             await Self.waitUntilWaiterCount(2, in: flight),
-            "Both callers did not register with the shared flight within 10 seconds"
+            "Both callers did not register with the shared flight within 30 seconds"
         )
         gate.open()
 
@@ -160,7 +160,7 @@ struct MCPSingleFlightTests {
         }
 
         // The shared operation must not outlive its last caller.
-        for _ in 0..<100 where observedCancellation.value == 0 {
+        for _ in 0..<3_000 where observedCancellation.value == 0 {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(observedCancellation.value == 1)

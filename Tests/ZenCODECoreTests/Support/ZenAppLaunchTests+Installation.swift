@@ -4,7 +4,6 @@
 //
 //  Tests of `zen --ui` that cover the option parsing, the decision to build
 //  the app, the build helpers and the installation of the app bundle.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 #if os(macOS)

@@ -362,7 +362,7 @@ struct MCPLocalTransportWriterTests {
     private static func waitUntilWedged(
         _ writer: MCPLocalTransportWriter
     ) async throws {
-        for _ in 0..<20_000 {
+        for _ in 0..<60_000 {
             if writer.inFlightJobCount == 1, writer.didStallInFlightFrame {
                 return
             }
@@ -385,7 +385,7 @@ struct MCPLocalTransportWriterTests {
         _ writer: MCPLocalTransportWriter,
         atLeast count: Int
     ) async throws {
-        for _ in 0..<20_000 {
+        for _ in 0..<60_000 {
             if writer.queuedJobCount >= count {
                 return
             }

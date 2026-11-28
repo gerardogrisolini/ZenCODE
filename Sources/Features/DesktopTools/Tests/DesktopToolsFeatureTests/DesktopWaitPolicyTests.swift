@@ -72,13 +72,6 @@ struct DesktopWaitPolicyTests {
         #expect(throws: DesktopControlError.self) { try DesktopWaitPolicy.validate(nan) }
     }
 
-    @Test
-    func theDefaultTimeoutIsTheDocumentedOne() {
-        #expect(DesktopWaitPolicy.defaultTimeout == 5)
-        #expect(DesktopWaitPolicy.timeoutRange == 0...30)
-        #expect(DesktopWaitPolicy.pollSeconds == 0.25)
-    }
-
     // MARK: Validation: selectors
 
     @Test

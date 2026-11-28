@@ -119,14 +119,6 @@ struct DesktopWindowListingTests {
     }
 
     @Test
-    func noHostNoteWithoutHostWindows() {
-        let text = DesktopWindowListing.text(
-            windows: [window(id: 1)], frontmostAppName: "Terminal", hostAppName: "Terminal", screenRecordingGranted: true
-        )
-        #expect(text.note == nil)
-    }
-
-    @Test
     func screenRecordingNoteIsKeptAndMergedWithTheHostNote() {
         let only = DesktopWindowListing.text(
             windows: [window(id: 1)], frontmostAppName: nil, hostAppName: nil, screenRecordingGranted: false

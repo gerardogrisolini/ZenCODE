@@ -18,7 +18,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("zen --ui", .serialized)
+@Suite("zen --ui")
 struct ZenAppLaunchTests {
     typealias Installation = ZenAppInstallation
     typealias Stamp = ZenAppInstallation.BuildStamp
@@ -425,7 +425,7 @@ struct ZenAppLaunchTests {
     private static func contents(
         of file: URL,
         onceTheyContain fragment: String,
-        timeout: Duration = .seconds(10)
+        timeout: Duration = .seconds(30)
     ) async -> String {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)

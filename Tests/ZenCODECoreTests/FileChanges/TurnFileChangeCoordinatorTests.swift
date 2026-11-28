@@ -11,7 +11,7 @@ import Foundation
 import Testing
 import ToolCore
 
-@Suite(.serialized)
+@Suite
 struct TurnFileChangeCoordinatorTests {
     @Test
     func undoLatestThrowsWhenSummaryCannotBeUndone() async throws {

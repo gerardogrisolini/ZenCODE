@@ -301,7 +301,7 @@ private final class ZenCallMark {
 }
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenSharedChatObservationTests {
     private static func coordinator() -> AgentSharedChatCoordinator {
         AgentSharedChatCoordinator(source: AgentSharedChatCoordinator.Source(

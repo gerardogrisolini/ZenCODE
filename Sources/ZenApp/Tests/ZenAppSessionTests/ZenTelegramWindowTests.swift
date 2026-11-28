@@ -16,7 +16,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenTelegramWindowTests {
     /// The host's dormant refusal, without its trailing newline.
     private static let dormantRefusal = ZenTranscriptItem.Content.local(

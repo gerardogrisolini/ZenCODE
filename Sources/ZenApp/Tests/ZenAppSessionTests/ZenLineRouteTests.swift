@@ -8,7 +8,7 @@ import Testing
 import ZenCODECore
 @testable import ZenAppSession
 
-@Suite(.serialized)
+@Suite
 struct ZenLineRouteTests {
     private let registry = ZenAppCommands.registry
 

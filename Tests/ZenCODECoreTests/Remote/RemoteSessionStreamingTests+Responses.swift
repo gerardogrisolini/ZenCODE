@@ -6,7 +6,6 @@
 //  capture and replay, generic endpoint metadata, multipart deduplication
 //  (also when the completed text differs from the deltas only by whitespace),
 //  incomplete responses and tool outputs without a call ID.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

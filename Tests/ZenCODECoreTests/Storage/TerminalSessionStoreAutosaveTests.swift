@@ -16,7 +16,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite(.serialized)
+@Suite
 struct TerminalSessionStoreAutosaveTests {
     // MARK: - Format
 

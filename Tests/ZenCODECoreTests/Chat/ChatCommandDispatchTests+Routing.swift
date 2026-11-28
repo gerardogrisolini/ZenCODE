@@ -6,7 +6,6 @@
 //  and channel-only commands, the routing of every shared command onto its
 //  operation, and the order of the channel's command steps against the
 //  runtime and the closing notices.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

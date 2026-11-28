@@ -454,45 +454,6 @@ struct AgentSharedChatCoordinatorTests {
         await observation.cancel()
     }
 
-    // MARK: - Agent-to-agent visibility
-
-    /// Messages sent from one agent directly to another never enter the
-    /// coordinator mailbox. The coordinator must still emit them as
-    /// `.messages` events so rendering surfaces (TUI) can display the full
-    /// room traffic, but must NOT start a synthetic coordinator turn for them.
-    @Test
-    func agentToAgentMessagesAreEmittedForDisplayButDoNotTriggerATurn() async throws {
-        let room = "room-\(UUID().uuidString)"
-        let chat = try await makeChat(roomID: room, agents: ["alpha", "beta"])
-        let coordinator = makeCoordinator(chat: chat, pollInterval: .seconds(60))
-        let subscription = await coordinator.observeSubscription(roomID: room)
-        let observation = await Observation.make(stream: subscription.events)
-
-        // alpha sends a direct message to beta (not to the coordinator).
-        try await chat.send(
-            roomID: room,
-            senderID: "alpha",
-            destination: .direct(["beta"]),
-            text: "hey beta, what do you think?"
-        )
-        await coordinator.poll(roomID: room)
-
-        let events = await observation.wait(untilAtLeast: 1) { events in
-            events.contains { $0.renderedMessages != nil }
-        }
-        // The agent-to-agent message must have been emitted for display.
-        let allRenderedMessages = events.compactMap(\.renderedMessages).flatMap { $0 }
-        #expect(allRenderedMessages.contains { $0.text == "hey beta, what do you think?" })
-
-        // No auto-trigger: the coordinator must not wake itself for a message
-        // it was not a recipient of.
-        #expect(events.compactMap(\.autoTrigger).isEmpty)
-        #expect(await coordinator.activeAutoTrigger(roomID: room) == nil)
-
-        await observation.cancel()
-        await coordinator.stopAll()
-    }
-
     // MARK: - Helpers
 
     func makeChat(

@@ -71,7 +71,7 @@ private final class ZenDetachBox {
 }
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenSharedChatWindowTests {
     static let agentID = "agent-1"
     static let agentName = "Worker"

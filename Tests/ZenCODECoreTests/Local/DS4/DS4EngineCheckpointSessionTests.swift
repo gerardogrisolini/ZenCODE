@@ -15,7 +15,7 @@ import ToolCore
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("DS4 engine checkpoint session commands", .serialized)
+@Suite("DS4 engine checkpoint session commands")
 struct DS4EngineCheckpointSessionTests {
     private struct Environment {
         let root: URL

@@ -5,15 +5,9 @@
 //  Covers runtime invariants of automatic memory recall that request-assembly
 //  unit tests cannot reach: timeout/failure degradation, escaping and budgets,
 //  session isolation, history purity, sub-agent visibility, and recall health.
-//  The suite stays serialized as a conservative choice, for reasons that do
-//  not involve the environment: several tests call
-//  `MemoryGraphStoreRegistry.shared.reset()`, which drops the cached stores
-//  of the whole process, and the recall tests assert wall-clock bounds (a
-//  100 ms deadline, elapsed times under 1 s and 5 s) that CPU contention from
-//  sibling tests would make flaky. Recall settings are no longer a reason:
-//  they are injected with `MemoryAutomationSettings.withEnvironment`, a
-//  task-local, never with the process environment. Recall is local BM25; no
-//  test contacts a network.
+//  The suite stays serialized because recall tests assert wall-clock bounds
+//  (a 100 ms deadline and elapsed times under 1 s and 5 s).
+//  Recall settings are task-local and recall is local BM25; no test contacts a network.
 //
 
 import Foundation
@@ -270,7 +264,7 @@ struct MemoryAutomationFlowTests {
             #expect(!FileManager.default.fileExists(
                 atPath: MemoryGraphLocation.graphURL(for: workspace.workspaceURL).path
             ))
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: globalGraphURL)
         }
     }
 

@@ -172,10 +172,11 @@ jobs:
         run: swift build --target ZenCODECore
 
       - name: Test
-        # Several lifecycle suites intentionally exercise Foundation.Process,
-        # whose exit coordination and signal state are process-global. Running
-        # cases concurrently can park that shared manager and cascade timeouts.
-        run: swift test --no-parallel
+        # Swift Testing runs suites in parallel. Suites that share process-wide
+        # state use .serialized, and no test may depend on running alone: a test
+        # that cannot finish next to the others is removed, not serialized. See
+        # CONTRIBUTING.md.
+        run: swift test
 
       - name: Build release product
         run: swift build -c release --product zen
@@ -279,10 +280,11 @@ jobs:
         run: swift build --target ZenCODECore
 
       - name: Test
-        # Match macOS: deterministic process lifecycle coverage is more valuable
-        # here than case-level parallelism, which can poison Foundation's shared
-        # process manager and leave the test step waiting until the job timeout.
-        run: swift test --no-parallel
+        # Swift Testing runs suites in parallel. Suites that share process-wide
+        # state use .serialized, and no test may depend on running alone: a test
+        # that cannot finish next to the others is removed, not serialized. See
+        # CONTRIBUTING.md.
+        run: swift test
 
       - name: Build release product
         run: swift build -c release --product zen
@@ -415,9 +417,6 @@ jobs:
         run: swift build --package-path Sources/ZenApp
 
       - name: Test ZenApp package
-        # Unlike the root suite, no --no-parallel. That flag guards the suites
-        # that exercise Foundation.Process, whose exit coordination is
-        # process-global. ZenApp and its tests spawn no processes and leave the
-        # environment, working directory, and signals alone; the suites that
-        # share state are already marked .serialized.
+        # Like the root suite, ZenApp runs tests in parallel. Suites that share
+        # process state are marked .serialized.
         run: swift test --package-path Sources/ZenApp

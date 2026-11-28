@@ -43,7 +43,7 @@ private struct EmbeddingAwareIndex: MemoryIndex {
         scope: EngineMemoryScope,
         limit: Int
     ) async throws -> [ScoredMemoryID] {
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(30)
         while !embeddingRequested.isSet, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }

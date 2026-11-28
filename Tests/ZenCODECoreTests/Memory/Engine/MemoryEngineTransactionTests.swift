@@ -431,7 +431,7 @@ private actor GatedPersistence: MemoryPersistence {
 /// Polls `condition` until it holds or the bound elapses.
 private func waitForCondition(
     _ condition: () async -> Bool,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(30)
 ) async {
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while ContinuousClock.now < deadline {

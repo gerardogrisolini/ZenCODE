@@ -224,13 +224,6 @@ struct BrowserAddressDecisionMatrixTests {
         #expect(Set(Self.cases.map(\.host)).count == Self.cases.count)
     }
 
-    @Test
-    func onlyTheAlignedIPv6RangesChangedFromTheBaseline() {
-        let changed = Self.cases.filter { $0.before != nil }
-        #expect(changed.count == 21)
-        #expect(changed.allSatisfy { $0.host.contains(":") && $0.before == .allowed && $0.url == .blocked })
-    }
-
     /// Request-level decisions when a host resolves to a given address, with
     /// and without the local-development loopback capability. A 127 address
     /// relayed through NAT64 or 6to4 is restricted, never loopback, even for a

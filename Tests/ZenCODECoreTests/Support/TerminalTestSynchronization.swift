@@ -125,7 +125,7 @@ final class TerminalTestFlag: Sendable {
 /// The deadline is a test watchdog, not a change to the report's own timeout.
 /// Cancellation and a missing callback fail the test rather than hanging the suite.
 func terminalWaitForCursorReport(_ reports: TerminalCursorReport) async throws {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     while reports.isHoldingInput, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(1))
     }

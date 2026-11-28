@@ -78,7 +78,7 @@ struct VoiceModeSessionTests {
     }
 
     private func eventually(
-        timeout: Duration = .seconds(5),
+        timeout: Duration = .seconds(30),
         _ condition: () async -> Bool
     ) async -> Bool {
         let deadline = ContinuousClock.now + timeout

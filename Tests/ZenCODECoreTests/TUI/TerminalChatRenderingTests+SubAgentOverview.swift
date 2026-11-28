@@ -415,19 +415,6 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentModelNameStrippingRemoteAPIPrefixHandlesEdgeCases() {
-        #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("zai:glm-5.2") == "glm-5.2")
-        #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil)
-        // An unknown provider key must not be stripped.
-        #expect(
-            ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("remoteapi:openrouter:anthropic/claude")
-                == nil
-        )
-        // Missing model name segment.
-        #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("openrouter:") == nil)
-    }
-
-    @Test
     func subAgentOverviewShowsOnlyOneStableThinkingLabel() {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_thinking",

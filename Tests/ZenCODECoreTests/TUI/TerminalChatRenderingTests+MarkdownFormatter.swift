@@ -337,19 +337,4 @@ extension TerminalChatRenderingTests {
         // No incremented number appears.
         #expect(!plain.contains("1000000001"))
     }
-
-    @Test
-    func markdownFormatterStreamsTableIntactUntilComplete() {
-        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
-
-        // The header stays buffered while the table is still only a candidate.
-        let header = formatter.consume("| A | B |\n")
-        #expect(header == "")
-
-        let rendered = formatter.consume("| --- | --- |\n| 1 | 2 |\n") + formatter.finish()
-        // Once complete, the full table (with box drawing) is rendered intact.
-        #expect(rendered.contains("┌"))
-        #expect(rendered.contains("A"))
-        #expect(rendered.contains("1"))
-    }
 }

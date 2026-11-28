@@ -97,6 +97,7 @@ private final class StartedSession {
     var session: ZenCODETelegramSession?
 }
 
+// The signal-monitor test changes process-wide SIGUSR1 and SIGUSR2 handlers.
 @ChatSessionActor
 @Suite("zen --telegram runner", .serialized, .timeLimit(.minutes(2)))
 struct ZenCODETelegramRunnerTests {
@@ -226,7 +227,7 @@ struct ZenCODETelegramRunnerTests {
     }
 
     private static func waitUntil(
-        attempts: Int = 1_000,
+        attempts: Int = 3_000,
         _ condition: @ChatSessionActor () async -> Bool
     ) async -> Bool {
         for _ in 0 ..< attempts {

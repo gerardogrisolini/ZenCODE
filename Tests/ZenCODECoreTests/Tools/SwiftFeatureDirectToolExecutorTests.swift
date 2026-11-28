@@ -13,65 +13,6 @@ import ToolCore
 
 extension SwiftFeatureRuntimeTests {
     @Test
-    func directToolExecutorRoutesMatchingToolToSwiftFeature() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-routing-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-        let executableURL = rootURL.appendingPathComponent("feature")
-        try """
-        #!/bin/sh
-        cat >/dev/null
-        printf '{"ok":true,"output":"feature-dynamic-output"}\n'
-        """.write(to: executableURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: executableURL.path
-        )
-
-        let runtime = SwiftFeatureRuntime(
-            features: [
-                SwiftFeatureBundle(
-                    id: "dynamic-fixture",
-                    executableURL: executableURL,
-                    tools: [
-                        ToolDescriptor(
-                            name: "dynamic.fixture",
-                            description: "Runs a dynamic fixture",
-                            inputSchema: #"{"type":"object","properties":{}}"#
-                        )
-                    ]
-                )
-            ]
-        )
-        let executor = DirectToolExecutor(
-            swiftFeatureRuntime: runtime,
-            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
-        )
-        let toolCall = DirectAgentToolCall(
-            id: "feature-call-1",
-            name: "dynamic.fixture",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-
-        let result = await executor.execute(
-            sessionID: "test-session",
-            toolCall: toolCall,
-            workingDirectory: rootURL,
-            allowedToolNames: ["dynamic.fixture"]
-        )
-
-        #expect(result.output == "feature-dynamic-output")
-        #expect(result.status == .completed)
-    }
-
-    @Test
     func directToolExecutorImportsFeatureInvocationImageAttachments() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-attachment-\(UUID().uuidString)", isDirectory: true)

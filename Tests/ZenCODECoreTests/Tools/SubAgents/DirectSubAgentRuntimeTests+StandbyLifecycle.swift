@@ -301,7 +301,7 @@ private func sendCoordinatorMessage(
 
 /// Starts a blocked standby follow-up turn for `agentID`, then opens an
 /// `agent.message` awaitReply wait from that turn and returns once the
-/// question reached the coordinator mailbox (with a 5 s deadline).
+/// question reached the coordinator mailbox (with a 30 s deadline).
 private func startStandbyAwaitReply(
     agentID: String,
     runtime: DirectSubAgentRuntime,
@@ -321,7 +321,7 @@ private func startStandbyAwaitReply(
             )
         )
     }
-    let deadline = ContinuousClock.now + .seconds(5)
+    let deadline = ContinuousClock.now + .seconds(30)
     while !(await runtime.sharedChat.hasPendingMessages(
         roomID: "root",
         participantID: AgentSharedChat.coordinatorID(for: "root")

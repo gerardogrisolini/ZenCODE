@@ -38,8 +38,10 @@ struct TerminalTelegramFoundationTests {
     // MARK: - Governor
 
     /// A controllable monotonic clock so window math is verified without real
-    /// sleeping. Anchored at the first read, then advanced in whole seconds.
+    /// sleeping. Anchored once, then advanced explicitly; it never follows wall
+    /// time, so a loaded runner cannot let a window expire between two calls.
     private final class MutableClock: @unchecked Sendable {
+        private let anchor = ContinuousClock().now
         private let lock = Mutex(Double?.none)
         func advance(by seconds: Double) {
             lock.withLock { $0 = ($0 ?? 0) + seconds }
@@ -51,9 +53,6 @@ struct TerminalTelegramFoundationTests {
                 return 0
             }
             return anchor.advanced(by: .seconds(elapsed))
-        }
-        private var anchor: ContinuousClock.Instant {
-            ContinuousClock().now
         }
     }
 

@@ -76,7 +76,7 @@ struct RemoteToolBatchConcurrencyTests {
                     reads.enter()
                     defer { reads.leave() }
                     // In flight until a second read has started as well.
-                    let deadline = ContinuousClock.now + .seconds(2)
+                    let deadline = ContinuousClock.now + .seconds(30)
                     while reads.peak < 2, ContinuousClock.now < deadline {
                         try await Task.sleep(for: .milliseconds(5))
                     }

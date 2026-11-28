@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import ZenAppSession
 
-@Suite(.serialized)
+@Suite
 struct ZenPromptHistoryTests {
     @Test("Recording trims, skips blanks and repeats in a row")
     func recording() {

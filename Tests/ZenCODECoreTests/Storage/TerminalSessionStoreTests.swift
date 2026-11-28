@@ -9,7 +9,7 @@ import Foundation
 @testable import ZenCODECore
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct TerminalSessionStoreTests {
     @Test
     func savesBinarySessionForProject() throws {

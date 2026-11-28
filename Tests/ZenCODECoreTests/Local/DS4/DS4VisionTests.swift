@@ -110,7 +110,7 @@ private struct FakeImageResolver: DS4ImageFileResolving {
 
 // MARK: - Staging
 
-@Suite("DS4 image staging", .serialized)
+@Suite("DS4 image staging")
 struct DS4VisionImageStagingTests {
 
     @Test
@@ -207,7 +207,7 @@ struct DS4VisionRendererTests {
 
 // MARK: - Engine API
 
-@Suite("DS4 prepared transcripts", .serialized)
+@Suite("DS4 prepared transcripts")
 struct DS4VisionPreparedTranscriptTests {
     private func engine(hasVision: Bool = true) -> MockDS4Engine {
         MockDS4Engine(
@@ -313,7 +313,7 @@ struct DS4VisionPreparedTranscriptTests {
 
 // MARK: - Client
 
-@Suite("DS4 vision client", .serialized)
+@Suite("DS4 vision client")
 struct DS4VisionClientTests {
     private struct Setup {
         let harness: DS4ClientHarness

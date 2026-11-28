@@ -23,17 +23,18 @@ but it is not a reproducible release input.
 
    ```bash
    swift build --target ZenCODECore
-   swift test --no-parallel
+   swift test
    swift build -c release --product zen
    bash -n Scripts/*.sh
    git diff --check
    ```
 
-   `swift test --no-parallel` includes `BundledFeatureCatalogParityTests`, which reconciles
+   `swift test` includes `BundledFeatureCatalogParityTests`, which reconciles
    the runtime catalog with each standalone optional-feature manifest and
    verifies that the root SwiftPM graph does not expose feature products. Run
-   `swift test` inside every changed `Sources/Features/<Feature>` package as
-   part of its feature-specific release validation.
+   `swift test` inside every changed `Sources/Features/<Feature>` package, or
+   `Scripts/test-all.sh --only <feature-id>`, as part of its feature-specific
+   release validation.
 
    CI, the release workflow, and both install scripts strip the release binary
    before it is verified, archived, or installed: `strip -u -r` on macOS and

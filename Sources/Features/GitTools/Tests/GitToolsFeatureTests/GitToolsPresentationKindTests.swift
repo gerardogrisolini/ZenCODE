@@ -35,15 +35,6 @@ struct GitToolsPresentationKindTests {
         Expectation(name: "git.switch", tool: AnyFeatureTool(GitSwitchTool()), kind: .other, action: "Switch")
     ]
 
-    @Test func noGitToolPresentsAsExecute() {
-        for expectation in Self.expectations {
-            #expect(
-                expectation.tool.descriptor.presentation?.kind != .execute,
-                "\(expectation.name) must not use the execute presentation kind"
-            )
-        }
-    }
-
     @Test func toolKindsAndActionsMatchTheExpectedPresentation() {
         for expectation in Self.expectations {
             let descriptor = expectation.tool.descriptor

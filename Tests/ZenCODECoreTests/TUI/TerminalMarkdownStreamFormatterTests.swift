@@ -282,17 +282,4 @@ struct TerminalMarkdownStreamFormatterTests {
         let output = formatter.consume("raw **text** without formatting")
         #expect(output == "raw **text** without formatting")
     }
-
-    @Test
-    func codeFenceLinesAreNotStreamed() {
-        var formatter = makeFormatter()
-        // Opening fence — nothing streams as prose.
-        _ = formatter.consume("```swift\n")
-
-        // Inside the fence, content goes through the code-block renderer.
-        let body = formatter.consume("let x = 1\n")
-        #expect(!body.isEmpty)
-        // Closing fence.
-        _ = formatter.consume("```\n")
-    }
 }

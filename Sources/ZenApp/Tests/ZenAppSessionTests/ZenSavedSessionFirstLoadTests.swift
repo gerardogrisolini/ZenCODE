@@ -17,7 +17,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenSavedSessionFirstLoadTests {
     @Test("The first load in a new window of a session an earlier run saved restores its transcript, name, and title")
     func firstLoadAfterAnEarlierRun() async throws {

@@ -7,6 +7,7 @@ import FeatureKit
 import Foundation
 import Testing
 
+// Serialized: each case spawns a real child through Foundation.Process, whose exit servicing is process-global.
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct FeaturePersistentProcessLifecycleTests {
     /// Echo fixture: answers every framed request with the same response id.
@@ -42,7 +43,7 @@ struct FeaturePersistentProcessLifecycleTests {
         )
         let response = try await session.response(
             to: FeaturePersistentRequest(operation: .listTools),
-            timeout: 10
+            timeout: 30
         )
         #expect(response == Data("ok".utf8))
         let processID = await session.processIdentifier
@@ -112,13 +113,13 @@ struct FeaturePersistentProcessLifecycleTests {
         )
         let response = try await process?.response(
             to: FeaturePersistentRequest(operation: .listTools),
-            timeout: 10
+            timeout: 30
         )
         #expect(response == Data("ok".utf8))
 
         let weakProcess = WeakPersistentProcess(process)
         process = nil
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         while weakProcess.value != nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }

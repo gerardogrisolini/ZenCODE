@@ -4,10 +4,9 @@ import FeatureKit
 import ToolCore
 @testable import LocalToolsSupport
 
-extension LocalToolsSerialGroup {
 /// Unified-diff payloads whose hunk bodies hold lines that look like file
 /// headers: removing `-- note` yields `--- note`, adding `++ x` yields `+++ x`.
-@Suite(.serialized)
+@Suite
 struct LocalApplyPatchHeaderLookalikeTests {
     private func workspace() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -54,5 +53,4 @@ struct LocalApplyPatchHeaderLookalikeTests {
         let entries = try FileManager.default.contentsOfDirectory(atPath: root.path).sorted()
         #expect(entries == ["one.lua", "two.txt"])
     }
-}
 }

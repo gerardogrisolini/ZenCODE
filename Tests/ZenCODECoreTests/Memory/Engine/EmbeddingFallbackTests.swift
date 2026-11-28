@@ -51,7 +51,7 @@ private struct CancellationSurfacingEmbeddingProvider: EmbeddingProvider {
 
 // MARK: - Tests
 
-@Suite(.serialized)
+@Suite
 struct EmbeddingFallbackTests {
     @Test
     func recallFallsBackToBM25WhenEmbeddingFails() async throws {

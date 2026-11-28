@@ -3,7 +3,7 @@ import Foundation
 @testable import XcodeToolsFeature
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct XcodeMCPTransportPolicyTests {
     #if os(macOS)
     @Test

@@ -12,7 +12,7 @@ import ToolCore
 #if canImport(Darwin) || canImport(Glibc)
 /// Exact line counts, binary detection, and patches produced by the single
 /// `git diff --no-index --numstat --binary` run per changed file.
-@Suite(.serialized)
+@Suite
 struct TurnFileChangeTrackerDiffTests {
     @Test
     func summaryReportsExactCountsAndPatchesForModifiedAddedDeletedAndBinaryFiles() async throws {

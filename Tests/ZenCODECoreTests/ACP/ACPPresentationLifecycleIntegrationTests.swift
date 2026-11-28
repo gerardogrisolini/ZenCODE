@@ -137,7 +137,9 @@ struct ACPPresentationLifecycleIntegrationTests {
         let sessionID = try #require(await bridge.testAnySessionID())
         let (epoch, promptID) = await bridge.installPresentationTestPrompt(sessionID: sessionID)
         let gate = PresentationSuspensionGate()
-        let pipeline = ACPPromptUpdatePipeline(sessionID: sessionID, writer: writer, buffer: ACPPromptUpdateBuffer(),
+        let pipeline = ACPPromptUpdatePipeline(sessionID: sessionID, writer: writer,
+            // Keep the first chunk buffered regardless of scheduler delays.
+            buffer: ACPPromptUpdateBuffer(now: { Date(timeIntervalSince1970: 0) }),
             isValid: { await bridge.isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) },
             canDeliver: { await bridge.canDeliverPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) },
             onUnitStart: { ordinal in if ordinal == 2 { await gate.park() } })

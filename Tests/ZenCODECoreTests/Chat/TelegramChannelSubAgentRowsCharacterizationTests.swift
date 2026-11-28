@@ -18,7 +18,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Telegram sub-agent rows characterization", .serialized, .timeLimit(.minutes(2)))
+@Suite("Telegram sub-agent rows characterization", .timeLimit(.minutes(2)))
 struct TelegramChannelSubAgentRowsCharacterizationTests {
     private typealias Support = TelegramChannelTestSupport
     private typealias Fixtures = TelegramTurnActivityFixtures

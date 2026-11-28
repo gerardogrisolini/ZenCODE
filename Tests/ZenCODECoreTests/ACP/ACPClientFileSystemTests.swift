@@ -323,7 +323,7 @@ private struct FileSystemHarness {
     let pump: Task<Void, Never>
     let captured: @Sendable () -> [JSONValue]
 
-    init(fixture: FileSystemClientFixture, timeout: Duration = .seconds(5)) {
+    init(fixture: FileSystemClientFixture, timeout: Duration = .seconds(30)) {
         let (stream, continuation) = AsyncStream<JSONValue>.makeStream()
         let wire = Mutex<[JSONValue]>([])
         self.captured = { wire.withLock { $0 } }

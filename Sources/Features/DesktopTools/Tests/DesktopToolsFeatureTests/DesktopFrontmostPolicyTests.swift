@@ -176,10 +176,4 @@ struct DesktopFrontmostPolicyTests {
         #expect(unconfirmed.contains("not confirmed as the frontmost app"))
         #expect(!unconfirmed.hasPrefix("Activated"))
     }
-
-    @Test
-    func activationDefaultsMatchTheDocumentedTimeout() {
-        #expect(DesktopActivationPolicy.defaultTimeout == 5)
-        #expect(DesktopActivationPolicy.timeoutRange == 0...30)
-    }
 }

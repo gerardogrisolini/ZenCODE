@@ -14,7 +14,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Chat file artifact snapshot", .serialized)
+@Suite("Chat file artifact snapshot")
 struct ChatFileArtifactSnapshotTests {
     /// An added file with its patch, as a finished turn records it.
     private static let addedSummary = TurnFileChangeSummary(entries: [

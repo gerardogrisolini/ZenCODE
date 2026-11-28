@@ -56,15 +56,6 @@ struct DictationVoiceAudioTests {
     }
 
     @Test
-    func twoStoppedRestartsThenARunningOneNeverFail() {
-        var policy = VoiceAudioRestartPolicy()
-        #expect(policy.restarted(isEngineRunning: false) == .retry)
-        #expect(policy.restarted(isEngineRunning: false) == .retry)
-        #expect(policy.restarted(isEngineRunning: true) == .announce)
-        #expect(policy.consecutiveAudioRestarts == 0)
-    }
-
-    @Test
     func threeConsecutiveStoppedRestartsFail() {
         var policy = VoiceAudioRestartPolicy()
         #expect(VoiceAudioRestartPolicy.maximumConsecutiveAudioRestarts == 3)

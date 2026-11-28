@@ -228,7 +228,8 @@ struct SherpaOnnxFileTranscriberTests {
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
-        #expect(started.duration(to: .now) < .seconds(10))
+        // The recognizer sleeps for 30 s: finishing well before it shows cancellation escalated.
+        #expect(started.duration(to: .now) < .seconds(20))
         #expect(try fixture.workDirectories().isEmpty)
     }
 

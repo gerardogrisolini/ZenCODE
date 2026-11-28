@@ -332,7 +332,7 @@ private extension MCPClient {
 }
 
 private func waitForLocalBridgeTermination(_ client: MCPClient) async -> Bool {
-    for _ in 0..<100 {
+    for _ in 0..<3_000 {
         if await client.process == nil {
             return true
         }

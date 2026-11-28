@@ -8,7 +8,7 @@ import Testing
 struct TerminalCursorReportTests {
     private func drain(_ input: TerminalRawInput, count: Int) -> String {
         var bytes: [UInt8] = []
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         // A poll may time out while the CPR callback still owns the input.
         // Count delivered bytes, not poll attempts, so that handoff cannot
         // silently consume one of the expected key slots.
@@ -115,7 +115,7 @@ struct TerminalCursorReportTests {
         })
         pipe.fileHandleForWriting.write(Data("x\u{1B}[19;1Ry".utf8))
         var results: [TerminalInteractiveLineReader.KeyReadResult] = []
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         // The asynchronous CPR callback may hold the keys across a poll timeout.
         // Retry only timeouts; preserve every other result to check ordering.
         while results.count < 2, ContinuousClock.now < deadline {

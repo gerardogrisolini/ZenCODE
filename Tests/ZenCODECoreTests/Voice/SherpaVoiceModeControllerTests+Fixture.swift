@@ -183,7 +183,7 @@ extension SherpaVoiceModeControllerTests {
             let launches = recognizerLaunches
             try queueUtterances(texts)
             #expect(await controller.speak("Ok", rendering: .plainText))
-            let deadline = ContinuousClock.now + .seconds(10)
+            let deadline = ContinuousClock.now + .seconds(30)
             while recognizerLaunches == launches, ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(20))
             }

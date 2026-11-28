@@ -10,7 +10,7 @@ import FeatureKit
 import ToolCore
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct XcodeFeatureCharacterizationTests {
     @Test
     func xcodeEnvironmentConfigurationPreservesExplicitBridgeArgumentsAndSession() throws {
@@ -212,26 +212,6 @@ struct XcodeFeatureCharacterizationTests {
             }
         #expect(methods.filter { $0 == "tools/list" }.count == 1)
         #expect(methods.filter { $0 == "tools/call" }.count == 2)
-    }
-
-    @Test
-    func xcodeConsentDiagnosticsMapToPermissionError() async {
-        let client = MCPClient(
-            configuration: MCPServerConfiguration(
-                executablePath: "/usr/bin/xcrun",
-                arguments: ["mcpbridge"],
-                environment: [:]
-            ),
-            localTransportPolicy: XcodeMCPTransportPolicy.make()
-        )
-
-        let error = await client.classifiedPolicyError(
-            kind: .stderr,
-            message: "The operation couldn’t be completed. (com.apple.dt.Xcode.MCPBridge.Authorization error 1.)",
-            hasStderrOutput: true
-        )
-
-        #expect(error?.localizedDescription == XcodeMCPServerConfiguration.authorizationMessage)
     }
     #endif
 

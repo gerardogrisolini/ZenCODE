@@ -15,7 +15,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Chat planning commands", .serialized)
+@Suite("Chat planning commands")
 struct ChatPlanningCommandsTests {
     private typealias Fixtures = ChatTestFixtures
     private typealias Roles = AgentProfileRoleTestSupport

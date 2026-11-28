@@ -10,6 +10,7 @@ import Foundation
 @testable import ZenCODERuntime
 import Testing
 
+// Serialized: the ChatGPT sign-in cases bind the fixed OAuth callback port 1455 (no other suite uses it).
 @Suite(.serialized)
 struct SubscriptionAuthFlowTests {
 #if os(macOS)
@@ -80,7 +81,7 @@ struct SubscriptionAuthFlowTests {
         // A listener cancelled by a previous test may still be releasing the
         // port; retry the bind briefly so the blocker reliably owns port 1455.
         var bindResult: Int32 = -1
-        for _ in 0..<30 {
+        for _ in 0..<300 {
             bindResult = withUnsafePointer(to: sockaddr_in(
                 sin_len: UInt8(MemoryLayout<sockaddr_in>.size),
                 sin_family: sa_family_t(AF_INET),

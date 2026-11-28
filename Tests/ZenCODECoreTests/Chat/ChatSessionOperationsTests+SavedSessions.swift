@@ -5,7 +5,6 @@
 //  The first half of the session operations tests: saving, listing, loading,
 //  restoring, and deleting saved sessions, and compaction, with the helper
 //  only these tests use.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

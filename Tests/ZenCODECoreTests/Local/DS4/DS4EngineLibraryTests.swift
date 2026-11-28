@@ -209,9 +209,8 @@ struct DS4EngineLibraryTests {
 // MARK: - Real library
 
 /// Runs against a built libzencode-ds4 (ZENCODE_DS4_ENGINE_LIBRARY) without
-/// loading a model. Serialized: it changes DS4_LOCK_FILE for the process.
+/// loading a model.
 @Suite(
-    .serialized,
     .enabled(if: ProcessInfo.processInfo.environment["ZENCODE_DS4_ENGINE_LIBRARY"] != nil, "ZENCODE_DS4_ENGINE_LIBRARY not set")
 )
 struct DS4EngineLibraryRealTests {

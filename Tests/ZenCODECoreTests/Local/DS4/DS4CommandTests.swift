@@ -13,6 +13,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
+// DS4 turns share the process support directory used for image staging.
 @Suite("DS4 command", .serialized)
 struct DS4CommandTests {
     // MARK: - Status

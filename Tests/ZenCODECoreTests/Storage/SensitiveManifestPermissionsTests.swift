@@ -10,7 +10,7 @@ import Foundation
 @testable import ZenCODERuntime
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct SensitiveManifestPermissionsTests {
     @Test
     func savingSensitiveManifestsCreatesPrivateDirectoryAndFiles() throws {

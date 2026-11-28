@@ -19,7 +19,7 @@ import ToolCore
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Telegram channel topics", .serialized, .timeLimit(.minutes(2)))
+@Suite("Telegram channel topics", .timeLimit(.minutes(2)))
 struct TelegramChannelTopicsTests {
     private typealias Support = TelegramChannelTestSupport
 

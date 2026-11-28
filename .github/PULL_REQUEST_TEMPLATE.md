@@ -11,7 +11,8 @@
 <!-- Check what you ran locally. CI runs the same gate on macOS and Linux. -->
 
 - [ ] `swift build --target ZenCODECore`
-- [ ] `swift test --no-parallel`
+- [ ] `swift test`
+- [ ] `Scripts/test-all.sh` (when features, ZenApp, or ZenCRON change)
 - [ ] `swift build -c release --product zen`
 - [ ] `bash -n Scripts/*.sh`
 - [ ] `git diff --check`

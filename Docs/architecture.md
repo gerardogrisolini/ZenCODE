@@ -2250,14 +2250,15 @@ listed there.
 Every structural checkpoint must at least build the affected target and run its
 focused tests. Before a release, resolve only from the tracked
 `Package.resolved`, validate the root package graph, build `ZenCODECore`, run
-the complete non-live root test suite with `swift test --no-parallel`, and build
-the release `zen` product. An
+the complete non-live root test suite with `swift test`, which runs every suite
+in parallel, and build the release `zen` product. An
 optional feature change additionally runs `swift test` from its own
 `Sources/Features/<Feature>` package (with an isolated scratch directory) and
 checks its `--list-tools` output after installation. A ZenCRON change
 additionally runs `swift test --package-path Sources/ZenCRON`, which the CI job
-`zencron-package` also runs. Validate shell syntax with
-`bash -n Scripts/*.sh`, and finish with `git diff --check`.
+`zencron-package` also runs. `Scripts/test-all.sh` runs the tests of every
+package in parallel, features, ZenCRON, and ZenApp (macOS) included. Validate
+shell syntax with `bash -n Scripts/*.sh`, and finish with `git diff --check`.
 
 The version/release contract is documented in [release.md](release.md): a
 `vX.Y.Z` tag must equal `ZenPackageMetadata.version`, and release installers

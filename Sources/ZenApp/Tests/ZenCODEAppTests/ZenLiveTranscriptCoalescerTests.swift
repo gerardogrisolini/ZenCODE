@@ -17,9 +17,11 @@ struct ZenLiveTranscriptCoalescerTests {
     }
 
     /// Waits until `condition` holds, for at most `timeout`; records an issue
-    /// when the deadline passes.
+    /// when the deadline passes. The deadline only bounds a failure: polling
+    /// returns as soon as the condition holds, so it is generous enough for a
+    /// loaded parallel run on a small CI runner.
     private func waitUntil(
-        timeout: Duration = .seconds(10),
+        timeout: Duration = .seconds(30),
         sourceLocation: SourceLocation = #_sourceLocation,
         _ condition: () -> Bool
     ) async {
@@ -57,7 +59,7 @@ struct ZenLiveTranscriptCoalescerTests {
 
         // The deferred publish runs on the main actor after `interval`; under a
         // loaded parallel run that can take longer than any fixed sleep, so
-        // wait for it with a generous deadline.
+        // wait for it with a generous, bounded deadline.
         await waitUntil { coalescer.items.first?.content == .assistantText("abc", isStreaming: true) }
         #expect(coalescer.items.first?.content == .assistantText("abc", isStreaming: true))
         coalescer.stop()

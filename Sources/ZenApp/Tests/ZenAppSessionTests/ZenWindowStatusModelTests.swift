@@ -16,7 +16,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite("Window status model", .serialized)
+@Suite("Window status model")
 struct ZenWindowStatusModelTests {
     private static let reported = DirectAgentContextWindowStatus(
         usedTokens: 42_000,

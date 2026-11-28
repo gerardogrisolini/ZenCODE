@@ -27,7 +27,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Telegram channel turn activity", .serialized, .timeLimit(.minutes(2)))
+@Suite("Telegram channel turn activity", .timeLimit(.minutes(2)))
 struct TelegramChannelTurnActivityTests {
     private typealias Support = TelegramChannelTestSupport
     typealias Fixtures = TelegramTurnActivityFixtures

@@ -4,7 +4,6 @@ import FeatureKit
 import ToolCore
 @testable import LocalToolsSupport
 
-extension LocalToolsSerialGroup {
 /// Unified-diff payloads that end with a line feed, as `git diff` output does.
 /// That final line feed terminates the last patch line: it is not an empty
 /// context line, so it must not be matched against the file. A bare empty line
@@ -12,7 +11,7 @@ extension LocalToolsSerialGroup {
 ///
 /// Payloads are built by concatenation so their final line feed is explicit
 /// (multi-line literals do not end with one).
-@Suite(.serialized)
+@Suite
 struct LocalApplyPatchTrailingNewlineTests {
     private func workspace() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -136,5 +135,4 @@ struct LocalApplyPatchTrailingNewlineTests {
         #expect(failure?.contains("Patch context mismatch in mismatching.txt at line 3") == true)
         #expect(try String(contentsOf: mismatching, encoding: .utf8) == "one\ntwo\nthree\n")
     }
-}
 }

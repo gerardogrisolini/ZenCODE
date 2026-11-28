@@ -5,7 +5,7 @@ import ToolCore
 import ZenPackageMetadata
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct BundledFeatureCatalogParityTests {
     @Test
     func runtimeDefinitionsUseStableDistributionIdentity() {

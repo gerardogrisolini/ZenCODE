@@ -12,7 +12,7 @@ import Testing
 
 /// Polls `condition` every few milliseconds; records an issue after `timeout`.
 func ds4Eventually(
-    timeout: Duration = .seconds(5),
+    timeout: Duration = .seconds(30),
     sourceLocation: SourceLocation = #_sourceLocation,
     _ condition: @Sendable () async -> Bool
 ) async {

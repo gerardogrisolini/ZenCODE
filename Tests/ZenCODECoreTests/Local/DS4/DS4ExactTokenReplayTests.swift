@@ -52,6 +52,7 @@ extension RemoteGenerationClient {
     }
 }
 
+// DS4 turns share the process support directory used for image staging.
 @Suite("DS4 exact token replay", .serialized)
 struct DS4ExactTokenReplayTests {
     private static let dsmlCall = DS4ClientHarness.dsml41EchoCall("hi")

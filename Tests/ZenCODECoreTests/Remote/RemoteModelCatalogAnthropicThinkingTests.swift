@@ -10,7 +10,7 @@ import Testing
 
 /// Anthropic API-key setup: `/v1/models` `capabilities` must produce the wire
 /// thinking mode and levels, so adaptive-only models never get `enabled`.
-@Suite(.serialized)
+@Suite
 struct RemoteModelCatalogAnthropicThinkingTests {
     private static let anthropicBaseURL = "https://api.anthropic.com/v1"
     private static let nonAnthropicBaseURL = "https://catalog.example.test/api.anthropic.com/v1"

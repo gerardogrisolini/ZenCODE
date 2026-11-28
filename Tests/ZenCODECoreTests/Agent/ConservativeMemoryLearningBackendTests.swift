@@ -130,7 +130,7 @@ import Testing
         let core = try await backend(mock)
         let text = try await MemoryTurnContext.$currentTurnMemoryBlock.withValue("RECALLED SECRET CLAIM") {
             try await core.proposeMemory(parentSessionID: "root", prompt: "bounded evidence", systemPrompt: "extract only",
-                permit: MemoryLearningPermit(), timeout: .seconds(1))
+                permit: MemoryLearningPermit(), timeout: .seconds(30))
         }
         #expect(text == "null")
         let requests = await mock.requests
@@ -164,7 +164,7 @@ import Testing
             let permit = MemoryLearningPermit()
             let work = Task {
                 try await core.proposeMemory(parentSessionID: "root", prompt: "evidence", systemPrompt: "extract",
-                    permit: permit, timeout: .milliseconds(mode == 0 ? 20 : 1000))
+                    permit: permit, timeout: .milliseconds(mode == 0 ? 20 : 30_000))
             }
             while await mock.requests.isEmpty { await Task.yield() }
             if mode == 1 { work.cancel() }

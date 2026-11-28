@@ -5,7 +5,6 @@
 //  First part of the ChatGPT Subscription continuation tests: cached
 //  continuations, replay fallback detection, structured backend and auth
 //  failure retries, and continuations restored from a saved response ID.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

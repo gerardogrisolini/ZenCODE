@@ -23,7 +23,7 @@ import ToolCore
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Terminal session steps characterization", .serialized, .timeLimit(.minutes(2)))
+@Suite("Terminal session steps characterization", .timeLimit(.minutes(2)))
 struct TerminalSessionStepsCharacterizationTests {
     private struct Environment {
         let root: URL

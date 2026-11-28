@@ -56,7 +56,7 @@ final class PrimaryScreenCapture: Sendable {
         let before = deliveries.completed
         let response = terminal.withLock { $0.cursorReport }
         for byte in response.utf8 { _ = reports.consume(byte) }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         while deliveries.completed == before, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(1))
         }

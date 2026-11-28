@@ -92,6 +92,7 @@ extension TelegramChannelIngressPrecedenceTests {
         case .none:
             return nil
         case .choice:
+            let cardsBeforeQuestion = fixture.cards.values.count
             task = Task { @ChatSessionActor in
                 await channel.chooseOne(
                     title: "Pick",
@@ -99,8 +100,12 @@ extension TelegramChannelIngressPrecedenceTests {
                     selectedID: nil
                 )
             }
-            try await Support.waitUntil { channel.pendingChoiceReader != nil }
-            try #require(channel.pendingChoiceReader != nil)
+            // The reader is installed before its menu is sent. Do not count
+            // the setup card among the ingress row's responses.
+            try await Support.waitUntil {
+                channel.pendingChoiceReader != nil && fixture.cards.values.count > cardsBeforeQuestion
+            }
+            try #require(channel.pendingChoiceReader != nil && fixture.cards.values.count > cardsBeforeQuestion)
         case .line:
             task = Task { @ChatSessionActor in
                 await channel.readLine(prompt: "Name?")

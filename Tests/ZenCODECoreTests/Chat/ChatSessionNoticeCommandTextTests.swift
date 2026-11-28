@@ -12,7 +12,7 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
-@Suite("Chat session command texts", .serialized)
+@Suite("Chat session command texts")
 struct ChatSessionCommandTextTests {
     // MARK: - Fixtures
 

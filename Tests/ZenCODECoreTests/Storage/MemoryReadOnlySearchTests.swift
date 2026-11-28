@@ -161,7 +161,7 @@ struct MemoryReadOnlySearchStoreTests {
 
 // MARK: - Embedding environment isolation
 
-@Suite(.serialized)
+@Suite
 struct MemoryEmbeddingIsolationTests {
 
     @Test

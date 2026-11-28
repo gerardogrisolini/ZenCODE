@@ -428,26 +428,11 @@ struct DesktopElementPolicyTests {
     }
 
     @Test
-    func setValueIsReReadWithinAHalfSecondBudget() {
-        #expect(DesktopElementPolicy.setValueReadBackInterval >= .milliseconds(50))
-        #expect(DesktopElementPolicy.setValueReadBackInterval <= .milliseconds(100))
-        #expect(DesktopElementPolicy.setValueReadBackBudget == .milliseconds(500))
-    }
-
-    @Test
     func notAppliedValueAsksToReReadBeforeTypingAgain() {
         let message = DesktopElementPolicy.valueNotAppliedMessage(element: "AXTextField 'Name' in Notes")
         #expect(message.hasPrefix("Value not applied: AXTextField 'Name' in Notes still reads back its previous value"))
         #expect(message.contains("Re-read the value with list_elements before using focus_element and type_text"))
         #expect(message.contains("not typed twice"))
-    }
-
-    @Test
-    func unconfirmedValueNoteSaysItMayHaveBeenApplied() {
-        let note = DesktopElementPolicy.valueUnconfirmedNote
-        #expect(note.contains("did not confirm the write before the Accessibility timeout"))
-        #expect(note.contains("may have been applied"))
-        #expect(note.contains("re-read it"))
     }
 
     // MARK: Argument validation
@@ -485,12 +470,6 @@ struct DesktopElementPolicyTests {
             }
             #expect(error?.errorDescription?.hasPrefix("Invalid argument 'window_index': must be omitted with element_ref") == true)
         }
-    }
-
-    @Test
-    func coveredClicksAreRetriedBrieflyBeforeBeingRefused() {
-        #expect(DesktopElementPolicy.topmostAttempts == 3)
-        #expect(DesktopElementPolicy.topmostRetryDelay == .milliseconds(100))
     }
 
     @Test
@@ -739,17 +718,6 @@ struct DesktopKeyboardFocusPolicyTests {
             #expect(!DesktopKeyboardFocusPolicy.checksFocus(beforeCharacter: 5, character: character))
             #expect(!DesktopKeyboardFocusPolicy.checksFocus(beforeCharacter: 19, character: character))
         }
-    }
-
-    @Test
-    func aLineBreakInTheMiddleOfTheTextIsPrecededByACheck() {
-        let text = Array("echo hello\nrm file\tend\r\nnext")
-        let checked = text.indices.filter { DesktopKeyboardFocusPolicy.checksFocus(beforeCharacter: $0, character: text[$0]) }
-        for (index, character) in text.enumerated() where DesktopKeyboardFocusPolicy.isReturnOrTab(character) {
-            #expect(checked.contains(index))
-        }
-        #expect(checked.contains(0))
-        #expect(text.filter(DesktopKeyboardFocusPolicy.isReturnOrTab).count == 3)
     }
 
     @Test

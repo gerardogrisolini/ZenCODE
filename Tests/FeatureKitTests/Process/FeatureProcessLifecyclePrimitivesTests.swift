@@ -17,6 +17,7 @@ import Glibc
 /// persistent session: the race-safe one-shot signal, the descriptor helpers,
 /// and the bounded TERM -> grace -> KILL -> reap escalation. Every test is
 /// bounded so a regression fails instead of hanging the suite.
+// Serialized: each case spawns real children through Foundation.Process, whose exit servicing is process-global.
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct FeatureProcessLifecyclePrimitivesTests {
     private static let shell = URL(fileURLWithPath: "/bin/sh")
@@ -126,7 +127,7 @@ struct FeatureProcessLifecyclePrimitivesTests {
             process,
             exitSignal: exitSignal,
             grace: .milliseconds(300),
-            reapBudget: .seconds(5)
+            reapBudget: .seconds(30)
         )
 
         #expect(exitSignal.hasExited)
@@ -142,7 +143,7 @@ struct FeatureProcessLifecyclePrimitivesTests {
             process,
             exitSignal: exitSignal,
             grace: .seconds(2),
-            reapBudget: .seconds(5)
+            reapBudget: .seconds(30)
         )
 
         #expect(exitSignal.hasExited)
@@ -152,7 +153,7 @@ struct FeatureProcessLifecyclePrimitivesTests {
     func escalationIsIdempotentForAnAlreadyExitedChild() async throws {
         let (process, exitSignal) = try Self.launch(["-c", "exit 5"])
 
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         while !exitSignal.hasExited, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }

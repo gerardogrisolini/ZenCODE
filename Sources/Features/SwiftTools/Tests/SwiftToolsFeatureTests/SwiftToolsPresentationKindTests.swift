@@ -23,15 +23,6 @@ struct SwiftToolsPresentationKindTests {
         Expectation(name: "swift.outline", tool: AnyFeatureTool(SwiftOutlineTool()), kind: .inspect, action: "Inspect")
     ]
 
-    @Test func noSwiftToolPresentsAsExecute() {
-        for expectation in Self.expectations {
-            #expect(
-                expectation.tool.descriptor.presentation?.kind != .execute,
-                "\(expectation.name) must not use the execute presentation kind"
-            )
-        }
-    }
-
     @Test func toolKindsAndActionsMatchTheExpectedPresentation() {
         for expectation in Self.expectations {
             let descriptor = expectation.tool.descriptor

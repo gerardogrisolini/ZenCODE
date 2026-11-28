@@ -182,7 +182,7 @@ private final class FakeZenCRONLocator: Sendable {
 }
 
 @ChatSessionActor
-@Suite(.serialized)
+@Suite
 struct TerminalCronCommandTests {
     private static let userLines = [
         "# m h dom mon dow command",

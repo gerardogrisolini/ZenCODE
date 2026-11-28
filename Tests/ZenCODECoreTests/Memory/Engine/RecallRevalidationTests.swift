@@ -259,7 +259,7 @@ private actor GatedTransactionalPersistence: MemoryTransactionalPersistence {
 /// Polls `condition` until it holds, returning `false` if the bound elapses.
 /// Every wait in these tests is bounded so a regression fails instead of hanging.
 private func waitUntil(
-    timeout: Duration = .seconds(5),
+    timeout: Duration = .seconds(30),
     _ condition: () async -> Bool
 ) async -> Bool {
     let deadline = ContinuousClock.now.advanced(by: timeout)

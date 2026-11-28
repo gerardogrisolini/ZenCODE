@@ -4,7 +4,6 @@ import FeatureKit
 import ToolCore
 @testable import LocalToolsSupport
 
-extension LocalToolsSerialGroup {
 /// `local.applyPatch` with CRLF payloads. Line content is byte-exact: a CRLF
 /// patch applies to a CRLF file and keeps it CRLF, while an LF patch does not
 /// match a CRLF file (and the reverse). Only structure is CR-tolerant: the
@@ -16,7 +15,7 @@ extension LocalToolsSerialGroup {
 /// element of a joined payload has no `\r`, so unified-diff payloads end with a
 /// `\ No newline at end of file` marker, which is skipped, instead of a
 /// content line.
-@Suite(.serialized)
+@Suite
 struct LocalApplyPatchCRLFTests {
     private static let noNewlineMarker = "\\ No newline at end of file"
 
@@ -188,5 +187,4 @@ struct LocalApplyPatchCRLFTests {
         #expect(failure?.contains("Patch context mismatch in f.txt at line 1") == true)
         #expect(try bytes(of: file) == bytes("one\r\ntwo\r\n"))
     }
-}
 }

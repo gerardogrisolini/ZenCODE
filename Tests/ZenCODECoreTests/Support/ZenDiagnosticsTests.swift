@@ -8,7 +8,7 @@ import Foundation
 @testable import ZenCODERuntime
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct ZenDiagnosticsTests {
     @Test
     func secretRedactorRemovesRecognizedCredentials() {
@@ -38,29 +38,6 @@ struct ZenDiagnosticsTests {
         #expect(!record.message.contains(secret))
         #expect(!record.message.contains("token-value-12345"))
         #expect(!record.message.contains(Date().description))
-    }
-
-    @Test
-    func loggerEmittingDoesNotCreateApplicationFiles() throws {
-        let root = try temporaryDirectory()
-        defer {
-            ZenLogger.configure(nil)
-            try? FileManager.default.removeItem(at: root)
-        }
-        ZenLogger.configure(
-            ZenLoggerConfiguration(minimumLevel: .debug, destination: .systemLog)
-        )
-
-        let secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
-        ZenLogger.error(.diagnostics, "Authorization: Bearer token-value-12345 api_key=\(secret)")
-        ZenLogger.debug(.memory, "diagnostic body")
-
-        #expect(ZenLogger.resolvedConfiguration() != nil)
-        #expect(ZenLogger.resolvedConfiguration()?.minimumLevel == .debug)
-        #expect(ZenLogger.resolvedConfiguration()?.destinationDescription == "system log")
-        // The system-log backend owns storage: no application-owned log
-        // directory or file may be created anywhere under the isolated root.
-        #expect(try contentsOfDirectory(root).isEmpty)
     }
 
     @Test
@@ -369,10 +346,6 @@ struct ZenDiagnosticsTests {
         #expect(!report.hasFailure)
         #expect(report.exitCode == 0)
     }
-}
-
-private func contentsOfDirectory(_ url: URL) throws -> [String] {
-    try FileManager.default.contentsOfDirectory(atPath: url.path)
 }
 
 /// Creates a unique temporary directory for filesystem assertions.

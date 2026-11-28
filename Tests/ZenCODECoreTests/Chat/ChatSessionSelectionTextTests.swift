@@ -5,7 +5,6 @@
 //  The tests of the texts of the selection notices and of the active-tool
 //  count, as the terminal wrote them before they moved to
 //  `ChatSessionNoticeText`.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation
@@ -17,7 +16,7 @@ import ToolCore
 
 /// The active-tool count and the channel of the selection notices, as the
 /// terminal wrote them before they moved to `ChatSessionNoticeText`.
-@Suite("Chat session selection texts", .serialized)
+@Suite("Chat session selection texts")
 struct ChatSessionSelectionTextTests {
     private typealias Fixtures = ChatTestFixtures
 

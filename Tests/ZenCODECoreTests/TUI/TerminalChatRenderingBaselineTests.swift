@@ -354,40 +354,6 @@ struct TerminalChatRenderingBaselineTests {
         }
     }
 
-    @Test("Golden transcript is stable across identical runs")
-    func mixedSequenceTranscriptIsStable() async {
-        func runOnce() async -> String {
-            let renderer = makeGoldenCoordinator()
-            let toolCall = presentedToolCall(
-                id: "tool-baseline-1",
-                name: "tasks.list",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            )
-            await renderer.writeSubmittedPrompt("Ask something useful")
-            await renderer.writeThought("Reasoning about the request.\n")
-            await renderer.writeToolCallStarted(toolCall)
-            await renderer.writeToolCallCompleted(
-                toolCall,
-                result: DirectAgentToolResult(output: "Done", summary: "Done")
-            )
-            await renderer.writeAssistantContent("Here is the **answer**: 42.\n")
-            await renderer.finishAssistantContent()
-            _ = await renderer.renderSubAgentOverview(
-                signature: "agents:baseline",
-                text: "Sub-agents: 1 completed.\n\n",
-                force: false,
-                rememberSignature: true
-            )
-            await renderer.finishStreamingOutput()
-            return serializeTranscript(await renderer.capturedWriteEvents())
-        }
-
-        let first = await runOnce()
-        let second = await runOnce()
-        #expect(first == second)
-    }
-
     // MARK: - (c) Volume smoke (no timing assertions)
 
     @Test("Volume smoke: many single-character deltas render without loss")

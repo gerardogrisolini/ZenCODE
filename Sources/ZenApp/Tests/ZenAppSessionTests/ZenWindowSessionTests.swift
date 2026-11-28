@@ -15,7 +15,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenWindowSessionTests {
     @Test("session and attachment controls are available only when their operations are admitted")
     func controlAvailability() async throws {

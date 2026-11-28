@@ -22,10 +22,10 @@ struct RemoteTransportUpgradeBytesTests {
         let transport = RemoteTransportCore(owningEventLoopThreads: 1)
         do {
             let port = try #require(server.localAddress?.port)
-            let socket = try await transport.connectWebSocket(.init(url: URL(string: "ws://127.0.0.1:\(port)/")!, timeout: .seconds(2)))
+            let socket = try await transport.connectWebSocket(.init(url: URL(string: "ws://127.0.0.1:\(port)/")!, timeout: .seconds(30)))
             let frame = try await withThrowingTaskGroup(of: RemoteWebSocketFrame?.self) { tasks in
                 tasks.addTask { try await socket.receive() }
-                tasks.addTask { try await Task.sleep(for: .seconds(2)); throw RemoteTransportError.timeout }
+                tasks.addTask { try await Task.sleep(for: .seconds(30)); throw RemoteTransportError.timeout }
                 defer { tasks.cancelAll() }
                 return try await tasks.next() ?? nil
             }

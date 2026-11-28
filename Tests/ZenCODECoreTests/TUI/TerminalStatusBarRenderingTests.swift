@@ -35,7 +35,7 @@ private final class CapturedOutput: Sendable {
     }
 }
 
-@Suite(.serialized, TerminalBlockingTestScope())
+@Suite(TerminalBlockingTestScope())
 struct TerminalStatusBarRenderingTests {
 
     // MARK: - Cursor-hide placement

@@ -15,7 +15,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Chat session state", .serialized, .timeLimit(.minutes(2)))
+@Suite("Chat session state", .timeLimit(.minutes(2)))
 struct ChatSessionStateTests {
     // MARK: - Sequence
 

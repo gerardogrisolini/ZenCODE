@@ -28,7 +28,7 @@ struct TerminalTelegramStreamingTests {
         }
         await streamer.append("hel")
         await streamer.append("lo")
-        for _ in 0..<200 where await recorder.values.isEmpty {
+        for _ in 0..<3_000 where await recorder.values.isEmpty {
             try await Task.sleep(for: .milliseconds(10))
         }
         let values = await recorder.values
@@ -52,7 +52,7 @@ struct TerminalTelegramStreamingTests {
             sendDraft: { text, chat, id in try await drafts.send(text, chat, id) }
         )
         await reporter.appendAgentResponseDelta("complete answer")
-        for _ in 0..<300 where await drafts.attempts == 0 {
+        for _ in 0..<3_000 where await drafts.attempts == 0 {
             try await Task.sleep(for: .milliseconds(10))
         }
         _ = await reporter.publishPendingAgentResponseAtBoundary()

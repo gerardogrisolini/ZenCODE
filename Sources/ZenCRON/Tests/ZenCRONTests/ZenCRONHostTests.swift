@@ -16,6 +16,9 @@ import Glibc
 /// pass-through, exit-status and signal mirroring, signal forwarding, and the
 /// `zen` lookup on `PATH`. `PATH` is always passed in the environment of the
 /// child process; it is never changed in the test process.
+// Serialized: each case writes a fixture and execs it immediately. Two cases
+// forking at once let a child inherit the write descriptor of the other's
+// fixture, and the exec then fails on Linux with "Text file busy".
 @Suite(.serialized)
 struct ZenCRONHostTests {
     static let timeout: TimeInterval = 30

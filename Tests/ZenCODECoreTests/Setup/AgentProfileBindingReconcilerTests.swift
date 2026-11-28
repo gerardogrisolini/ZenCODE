@@ -12,7 +12,7 @@ private enum InjectedManifestCommitFailure: Error {
     case stop
 }
 
-@Suite(.serialized)
+@Suite
 struct AgentProfileBindingReconcilerTests {
     @Test
     func reconciliationRemovesOnlyStaleOrAmbiguousBindingsAndRecalculatesDefault() {

@@ -24,7 +24,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("DS4 engine live", .serialized)
+@Suite("DS4 engine live")
 struct DS4EngineLiveTests {
     private static let environment = ProcessInfo.processInfo.environment
 

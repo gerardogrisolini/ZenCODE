@@ -14,7 +14,7 @@ import Testing
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Saved-session operations", .serialized)
+@Suite("Saved-session operations")
 struct ChatSessionSavedSessionTests {
     private struct Environment {
         let root: URL

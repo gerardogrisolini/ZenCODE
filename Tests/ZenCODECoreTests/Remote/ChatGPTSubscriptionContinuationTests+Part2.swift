@@ -6,7 +6,6 @@
 //  reasoning replay, the Codex WebSocket handshake and pool, connection-limit
 //  and rate-limit retries, and the NIO client fallback to HTTP, with their
 //  private pool harness.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

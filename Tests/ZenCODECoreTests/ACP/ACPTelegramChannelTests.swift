@@ -25,7 +25,7 @@ import ToolCore
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite(.serialized, .timeLimit(.minutes(2)))
+@Suite(.timeLimit(.minutes(2)))
 struct ACPTelegramChannelTests {
     private static let activationReply = "Telegram remote control is active.\nLinked chat: Test"
 

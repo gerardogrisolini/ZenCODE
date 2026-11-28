@@ -16,7 +16,7 @@ import Testing
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Turn memory prefix stability", .serialized)
+@Suite("Turn memory prefix stability")
 struct TurnMemoryPrefixStabilityTests {
     private static let firstBlock = "<project-memory>\nfirst turn\n</project-memory>"
     private static let secondBlock = "<project-memory>\nsecond turn\n</project-memory>"

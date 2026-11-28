@@ -255,7 +255,9 @@ struct TelegramTUITests {
             await broker.authorize(
                 request,
                 lease: lease,
-                timeoutNanoseconds: 5_000_000_000
+                // A failure limit, not the property under test: the approval
+                // is expected long before it, even on a loaded runner.
+                timeoutNanoseconds: 120_000_000_000
             ) { message in
                 await collector.append(message)
                 return true
@@ -301,7 +303,8 @@ struct TelegramTUITests {
             await broker.authorize(
                 request,
                 lease: lease,
-                timeoutNanoseconds: 5_000_000_000
+                // A failure limit, not the property under test: see above.
+                timeoutNanoseconds: 120_000_000_000
             ) { message in
                 await collector.append(message)
                 return true

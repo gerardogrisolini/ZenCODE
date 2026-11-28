@@ -5,7 +5,6 @@
 //  Tests of the DS4 setup that create and reconfigure the provider manifest:
 //  inferred identifiers, preserved entries, launch parameters per file,
 //  deleting a model, cancellation and the providers path.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

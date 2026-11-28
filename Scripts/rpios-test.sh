@@ -17,11 +17,18 @@
 #
 # Targeted runs: call the machine directly and always pass the Linux build path,
 # because the repository `.build` directory is shared with macOS and holds
-# incompatible artifacts:
+# incompatible artifacts. The machine's `/tmp` is a 4 GB tmpfs; a root debug
+# build uses about 3 GB, and some tests compile real Swift packages in temporary
+# directories. The machine's disk has ample space, so use `/var/tmp` for build
+# and test scratch data:
+#   container machine run -n zencode-rpios -w "$PWD" -- mkdir -p /var/tmp/zencode-tmp
 #   container machine run -n zencode-rpios -w "$PWD" -- \
-#       swift test --build-path /tmp/zencode-build [--filter <suite-or-test>]
+#       env TMPDIR=/var/tmp/zencode-tmp swift test --build-path /var/tmp/zencode-build [--filter <suite-or-test>]
 # Quoting is not preserved through `container machine run -- bash -c`: put
 # multi-step or looping shell in a script file and run that file instead.
+# The root suite runs in parallel, as the Linux CI legs do: about 30 s, against
+# about 190 s serially on this machine. `--no-parallel` stays available for a
+# diagnosis, through `Scripts/test-all.sh --serial --only root`.
 # Concurrency and lifecycle races may not reproduce on an idle machine: when a
 # test fails only in CI, rerun it under CPU contention (background busy loops
 # oversubscribing the machine's cores) before concluding it is unrelated.
@@ -34,13 +41,14 @@
 #   Scripts/rpios-test.sh            # build + test
 #   Scripts/rpios-test.sh build      # build only
 #   Scripts/rpios-test.sh test       # test only
+#   Scripts/rpios-test.sh packages   # tests for all packages, including features
 #   Scripts/rpios-test.sh shell      # interactive shell
 
 set -euo pipefail
 
 MACHINE="zencode-rpios"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_PATH="/tmp/zencode-build"
+BUILD_PATH="/var/tmp/zencode-build"
 
 mode="${1:-all}"
 
@@ -55,7 +63,13 @@ case "$mode" in
         ;;
     test)
         echo "▶ Testing ZenCODE on Raspberry Pi OS (arm64)…"
-        run_in_machine swift test --no-parallel --build-path "$BUILD_PATH"
+        run_in_machine mkdir -p /var/tmp/zencode-tmp
+        run_in_machine env TMPDIR=/var/tmp/zencode-tmp swift test --build-path "$BUILD_PATH"
+        ;;
+    packages)
+        echo "▶ Testing all packages on Raspberry Pi OS (arm64)…"
+        run_in_machine mkdir -p /var/tmp/zencode-tmp
+        run_in_machine env TMPDIR=/var/tmp/zencode-tmp Scripts/test-all.sh --scratch-root /var/tmp/zencode-packages
         ;;
     shell)
         echo "▶ Opening shell on $MACHINE…"
@@ -66,10 +80,11 @@ case "$mode" in
         run_in_machine swift build --build-path "$BUILD_PATH"
         echo ""
         echo "▶ Running tests…"
-        run_in_machine swift test --no-parallel --build-path "$BUILD_PATH"
+        run_in_machine mkdir -p /var/tmp/zencode-tmp
+        run_in_machine env TMPDIR=/var/tmp/zencode-tmp swift test --build-path "$BUILD_PATH"
         ;;
     *)
-        echo "Usage: $0 [build|test|shell|all]"
+        echo "Usage: $0 [build|test|packages|shell|all]"
         exit 1
         ;;
 esac

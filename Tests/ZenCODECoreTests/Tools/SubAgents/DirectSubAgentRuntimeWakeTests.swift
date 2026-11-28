@@ -20,6 +20,7 @@ struct DirectSubAgentRuntimeWakeTests {
         let started = ContinuousClock.now
         #expect(await runtime.closeAgent(id: agentID))
         let output = await waiting.value
+        // `agent.wait` clamps its poll to 5 s: that is the widest margin to the wake.
         #expect(ContinuousClock.now - started < .seconds(3))
         #expect(!output.hasPrefix("Timed out waiting for delegated sub-agents."))
         await runtime.shutdown()
@@ -44,7 +45,8 @@ struct DirectSubAgentRuntimeWakeTests {
             rootSessionID: "root", toolCall: reply, workingDirectory: Self.workingDirectory, allowedToolNames: nil
         )
         let output = await waiting.value
-        #expect(ContinuousClock.now - started < .seconds(3))
+        // The poll is 60 s, so 30 s still tells a wake from the next poll.
+        #expect(ContinuousClock.now - started < .seconds(30))
         #expect(output.hasPrefix("[Live chat reply received while you were waiting]\n"))
         #expect(output.contains("Use the v2 API"))
         await runtime.shutdown()
@@ -67,7 +69,7 @@ struct DirectSubAgentRuntimeWakeTests {
 
     /// Polls with a deadline, so a regression fails instead of hanging.
     private static func waitUntilSuspended(_ runtime: DirectSubAgentRuntime) async {
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(30)
         while await runtime.suspendedWakeWaiterCount < 1, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(10))
         }

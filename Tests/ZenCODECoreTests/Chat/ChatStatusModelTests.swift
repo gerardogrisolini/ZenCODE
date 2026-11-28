@@ -16,7 +16,7 @@ import ToolCore
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Chat status model", .serialized, .timeLimit(.minutes(1)))
+@Suite("Chat status model", .timeLimit(.minutes(1)))
 struct ChatStatusModelTests {
     private typealias Fixtures = ChatTestFixtures
 

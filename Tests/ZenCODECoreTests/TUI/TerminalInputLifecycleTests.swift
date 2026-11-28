@@ -103,9 +103,10 @@ struct TerminalInputLifecycleTests {
         await loop.value
         let elapsed = start.duration(to: clock.now)
 
-        // Cancellation is observed by the 50 ms polling read. This generous
-        // margin covers a loaded test executor without hiding a stalled read.
-        #expect(elapsed < .seconds(1))
+        // Cancellation is observed by the 50 ms polling read. This margin (100x)
+        // covers a loaded test executor (a CI runner busy with real builds)
+        // without hiding a stalled read, which would never return.
+        #expect(elapsed < .seconds(5))
         // No spurious events are emitted while tearing down.
         #expect(receivedEvents.withLock { $0 } == 0)
     }

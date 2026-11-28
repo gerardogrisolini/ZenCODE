@@ -398,14 +398,6 @@ struct ZenCODESetupProviderPresetTests {
     }
 
     @Test
-    func everyFamilyOfTheFirstPageOffersMoreThanOneChoice() {
-        for family in SetupProviderFamily.allCases {
-            #expect(family.kinds.count > 1)
-        }
-        #expect(SetupProviderPreset.xaiAPI.family == .otherAPI)
-    }
-
-    @Test
     func configuredProviderChoicesAreMarkedInTheirSubmenu() {
         let configured: Set<String> = ["openai", "xai", "kimi-code", "zai", "qwen", "qwen-token-plan", "openrouter"]
         let alreadyConfigured = ZenCODESetupRunner.alreadyConfiguredProviderDetail

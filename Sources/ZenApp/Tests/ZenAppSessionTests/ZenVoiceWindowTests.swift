@@ -20,7 +20,7 @@ import ZenCODECore
 // MARK: - Tests
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenVoiceWindowTests {
     static let instruction = "Voice mode is on: the user is listening and your final answer is read aloud. Answer in short sentences. While you work, briefly comment on what you are doing as you do it. Keep any format the request requires."
     static let dormantRefusal = ZenTranscriptItem.Content.local(

@@ -6,8 +6,8 @@
 //  `/subagent` detail and the `/artifacts` panel, which hide the bottom
 //  layout): a panel closes only
 //  when the question is really asked. The terminal reads
-//  the trust from `UserDefaults.standard`, so the suite is serialized and
-//  removes the key it records.
+//  the trust from `UserDefaults.standard`: every test records it under the key
+//  of its own UUID-named folder and removes it, so the tests share nothing.
 //
 
 import Foundation
@@ -16,7 +16,7 @@ import Testing
 
 #if os(macOS)
 @ChatSessionActor
-@Suite(.serialized, .timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(1)))
 struct TerminalInteractionHostWorkspaceAccessTests {
     private func makeTerminal() throws -> TerminalChat {
         TerminalChat(

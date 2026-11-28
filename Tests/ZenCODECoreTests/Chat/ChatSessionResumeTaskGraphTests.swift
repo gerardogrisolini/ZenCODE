@@ -14,7 +14,7 @@ import Testing
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Chat session task-graph resumption", .serialized)
+@Suite("Chat session task-graph resumption")
 struct ChatSessionResumeTaskGraphTests {
     // MARK: - Helpers
 

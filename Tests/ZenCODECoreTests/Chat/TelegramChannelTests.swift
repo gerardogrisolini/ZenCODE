@@ -24,7 +24,7 @@ import ToolCore
 @testable import ZenCODERuntime
 
 @ChatSessionActor
-@Suite("Telegram channel", .serialized, .timeLimit(.minutes(2)))
+@Suite("Telegram channel", .timeLimit(.minutes(2)))
 struct TelegramChannelTests {
     private struct Environment {
         let root: URL
@@ -164,7 +164,7 @@ struct TelegramChannelTests {
     }
 
     private static func waitUntil(_ condition: @ChatSessionActor () async -> Bool) async -> Bool {
-        for _ in 0 ..< 1_000 {
+        for _ in 0 ..< 3_000 {
             if await condition() { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }

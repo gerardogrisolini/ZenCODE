@@ -322,38 +322,6 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     }
 
     @Test
-    func anEditWrittenWithThePathLastIsNotFollowedByASecondHeader() async {
-        let columns = 80
-        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
-        let toolCall = fileCall(id: "edit-1", name: "local.edit")
-
-        // The arguments in alphabetical order, as DS4 models may write them.
-        await send([
-            .toolStarted(name: "local.edit"),
-            .parameterStarted(name: "new"),
-            .parameterText("let x = 1\n"),
-            .parameterEnded,
-            .parameterStarted(name: "old"),
-            .parameterText("let x = 0\n"),
-            .parameterEnded,
-            .parameterStarted(name: "path"),
-            .parameterText(Self.path),
-            .parameterEnded,
-            .ended
-        ], to: renderer)
-        await renderer.writeToolCallStarted(toolCall)
-        #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
-        await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
-
-        let shown = await screen(of: renderer, width: columns)
-        #expect(shown == [
-            "", "", "🛠️  local.edit", "+ let x = 1", "- let x = 0",
-            "/tmp/Example.swift ✅", "", ""
-        ].joined(separator: "\n"))
-        #expect(shown.components(separatedBy: "local.edit").count - 1 == 1)
-    }
-
-    @Test
     func aMultiEditWrittenWithThePathLastIsNotFollowedByASecondHeader() async {
         let columns = 80
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })

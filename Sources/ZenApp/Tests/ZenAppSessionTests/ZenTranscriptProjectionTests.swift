@@ -24,7 +24,7 @@ private extension ZenLocalTranscriptItem {
     }
 }
 
-@Suite(.serialized)
+@Suite
 struct ZenTranscriptProjectionTests {
     private let workspace = FileManager.default.temporaryDirectory
         .appendingPathComponent("zen-app-projection-\(UUID().uuidString)", isDirectory: true)

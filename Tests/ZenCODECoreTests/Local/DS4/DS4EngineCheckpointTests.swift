@@ -41,6 +41,7 @@ extension MockDS4Engine {
     }
 }
 
+// DS4 turns share the process support directory used for image staging.
 @Suite("DS4 engine checkpoint", .serialized)
 struct DS4EngineCheckpointTests {
     private static let level75 = DS4EngineABI.ThinkMode.levelBase + 75
@@ -488,7 +489,7 @@ struct DS4EngineCheckpointTrailerTests {
 
 // MARK: - Store
 
-@Suite("DS4 engine checkpoint store", .serialized)
+@Suite("DS4 engine checkpoint store")
 struct DS4EngineCheckpointStoreTests {
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory

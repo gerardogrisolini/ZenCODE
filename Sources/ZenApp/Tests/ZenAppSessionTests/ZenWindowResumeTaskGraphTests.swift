@@ -15,7 +15,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenWindowResumeTaskGraphTests {
     private static let mainMenuTitle = "Open tasks from previous sessions"
     /// The main-menu item that resumes the seeded graph.

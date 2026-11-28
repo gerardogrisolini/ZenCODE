@@ -156,7 +156,8 @@ extension MemoryAutomationFlowTests {
                     #expect(workspaceBlock == nil)
                 }
             }
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: MemoryGraphLocation.globalGraphURL())
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: workspace.graphURL())
         }
     }
 
@@ -221,7 +222,7 @@ extension MemoryAutomationFlowTests {
                     #expect(block.hasSuffix(MemoryTurnCoordinator.blockClosingTag))
                 }
             }
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: workspace.graphURL())
         }
     }
 
@@ -248,7 +249,7 @@ extension MemoryAutomationFlowTests {
                     #expect(!block.contains("Not found in the current checkout"))
                 }
             }
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: workspace.graphURL())
         }
     }
 
@@ -275,7 +276,7 @@ extension MemoryAutomationFlowTests {
                     #expect(!block.contains("Not found in the current checkout"))
                 }
             }
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: MemoryGraphLocation.globalGraphURL())
         }
 
         let raw = "Relevant memory:\n- [id: A] Summary: moved from Sources/Gone/Flange.swift."
@@ -382,7 +383,7 @@ extension MemoryAutomationFlowTests {
                 }
                 #expect(block == nil)
             }
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: workspace.graphURL())
         }
     }
 
@@ -435,7 +436,7 @@ extension MemoryAutomationFlowTests {
                     #expect(elapsed < .seconds(1))
                 }
             }
-            await MemoryGraphStoreRegistry.shared.reset()
+            await MemoryGraphStoreRegistry.shared.remove(graphURL: workspace.graphURL())
         }
     }
 

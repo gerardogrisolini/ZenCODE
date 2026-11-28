@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import jira_tools_feature
 
-@Suite(.serialized)
+@Suite
 struct JiraLinuxSupportTests {
     private func makeStore() -> (JiraFileCredentialStore, URL) {
         let root = FileManager.default.temporaryDirectory

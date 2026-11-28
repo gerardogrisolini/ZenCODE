@@ -5,6 +5,7 @@ import ToolCore
 @testable import LocalToolsSupport
 
 extension LocalToolsSerialGroup {
+// Serialized: the cases read or mutate the process-global OperationMutationUncertainty (see LocalToolsSerialGroup).
 @Suite(.serialized)
 struct CompactOperationFileChangeTests {
     private func workspace() throws -> URL {

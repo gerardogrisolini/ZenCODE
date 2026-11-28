@@ -106,7 +106,7 @@ struct ZenAppLaunchArgumentsTests {
     }
 }
 
-@Suite("App launch configuration", .serialized)
+@Suite("App launch configuration")
 struct ZenAppLaunchConfigurationTests {
     @Test("a support directory without settings is not configured")
     func withoutSettings() async throws {

@@ -13,7 +13,7 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@Suite(.serialized, TerminalBlockingTestScope(), .timeLimit(.minutes(1)))
+@Suite(TerminalBlockingTestScope(), .timeLimit(.minutes(1)))
 struct TerminalStatusBarHiddenFooterTests {
     /// A started status bar writing into a terminal model as large as the
     /// geometry the bar measures at its start, with a draft in its input

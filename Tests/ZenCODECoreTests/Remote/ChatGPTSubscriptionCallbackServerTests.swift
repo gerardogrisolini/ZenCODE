@@ -13,7 +13,7 @@ import Testing
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("ChatGPT Subscription callback server", .serialized)
+@Suite("ChatGPT Subscription callback server")
 struct ChatGPTSubscriptionCallbackServerTests {
     private static let state = "expected-state"
 

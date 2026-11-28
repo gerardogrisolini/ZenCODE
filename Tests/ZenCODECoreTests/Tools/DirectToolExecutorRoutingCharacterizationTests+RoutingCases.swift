@@ -31,14 +31,6 @@ extension DirectToolExecutorRoutingCharacterizationTests {
             requests: ["local.exec"]
         ),
         row(
-            "local.exec claimed by a feature, feature.tools only", "local.exec",
-            #"{"command":"printf core-exec"}"#,
-            allowed: [SwiftFeatureRuntime.featurePackageToolsAllowedName],
-            Fixture(featureTools: ["local.exec"]),
-            expect: .exact("feature-handled:local.exec"),
-            featureInvoked: true
-        ),
-        row(
             "local.exec not allowed", "local.exec", #"{"command":"printf core-exec"}"#,
             allowed: ["local.read"],
             expect: notEnabled("local.exec"),

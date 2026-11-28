@@ -135,7 +135,7 @@ enum RemoteAutoCompactionWire: CaseIterable, CustomTestStringConvertible, Sendab
     }
 }
 
-@Suite("Remote generation auto compaction", .serialized)
+@Suite("Remote generation auto compaction")
 struct RemoteGenerationAutoCompactionTests {
     /// Small enough for a few thousand characters to reach the trigger:
     /// 95% (3,800 estimated tokens) triggers, 30% (1,200) is the target.

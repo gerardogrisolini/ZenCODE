@@ -2,8 +2,9 @@
 //  TerminalSubAgentCommandTests.swift
 //  ZenCODE
 //
-//  The `/subagent` command of the terminal: its registry entry, its `/help`
-//  line, the sub-agent its argument names, and the layout it requires.
+//  The `/subagent` command of the terminal: the sub-agent its argument names
+//  and the layout it requires. Its registry entry is covered by
+//  `ChatCommandRegistryTests`.
 //
 
 import Foundation
@@ -102,20 +103,6 @@ struct TerminalSubAgentCommandTests {
     /// Whether the terminal's bottom layout is hidden behind a panel.
     private func isFooterHidden(_ terminal: TerminalChat) async -> Bool {
         await terminal.statusBar.state.isFooterHidden
-    }
-
-    // MARK: - Registry
-
-    @Test
-    func subAgentIsAKnownCommandWithOrWithoutArguments() {
-        #expect(TerminalChat.isKnownSlashCommand("/subagent"))
-        #expect(TerminalChat.isKnownSlashCommand("/subagent foo"))
-    }
-
-    @Test
-    func subAgentRunsWhileAPromptIsGenerating() {
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/subagent"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/subagent x"))
     }
 
     // MARK: - Matching
@@ -338,12 +325,15 @@ extension TerminalSubAgentCommandTests {
                 on: TerminalPrimaryScreen(output: { _ in })
             )
         }
-        while !terminal.isOpeningDetailPanel {
-            await Task.yield()
+        // Ask for the close as soon as the opening has taken the phase, or as
+        // soon as it has created the panel: which of the two the scheduler
+        // reaches first is not something a test can pin without a hook in the
+        // opening, and the contract below holds either way.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !terminal.isOpeningDetailPanel, terminal.detailPanel == nil,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
         }
-        // The opening is suspended before the panel exists: the close only
-        // asks it to give everything back.
-        #expect(terminal.detailPanel == nil)
         await terminal.closeDetailPanel(reason: .consent)
         await opening.value
 

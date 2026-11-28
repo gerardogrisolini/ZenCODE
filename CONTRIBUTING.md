@@ -30,10 +30,11 @@ Run the same gate CI runs before opening a pull request:
 
 ```bash
 swift build --target ZenCODECore          # fast shared-runtime compile
-swift test --no-parallel                  # full non-live suite and release/CI gate
+swift test                                # full non-live suite and release/CI gate
 swift build -c release --product zen      # release product
 swift test --package-path Sources/ZenCRON # ZenCRON package; only when ZenCRON changes
 swift test --package-path Sources/ZenApp  # macOS app; when ZenApp or the ZenCODECore API it uses changes
+Scripts/test-all.sh                       # every package, features included, in parallel
 bash -n Scripts/*.sh                      # shell syntax
 git diff --check                          # whitespace hygiene
 ```
@@ -53,6 +54,13 @@ ZenApp (`Sources/ZenApp`) is likewise a standalone package outside the root
 graph; it builds the root package through a path dependency. `swift test` at the
 root does not run its tests. The CI job `zenapp-package` builds and tests it on
 macOS only, because the app requires macOS 26 and SwiftUI.
+
+`Scripts/test-all.sh` runs `swift test` for the root package, ZenCRON, ZenApp
+(macOS only), and every feature package in the catalog (on Linux, only the
+features installed there). Test cases run in parallel inside each package, and
+up to `--jobs` packages (default 2) run at a time. `--only` selects packages,
+`--scratch-root` gives each package its own build directory, and `--serial`
+adds `--no-parallel` for diagnosis.
 
 Live provider checks are opt-in through `ZENCODE_RUN_LIVE_*` environment
 variables. Leave them unset for ordinary verification; CI never runs them.
@@ -93,7 +101,22 @@ validation gate moves.
   (`import Testing`, `@Suite`, `@Test`, `#expect`, `#require`), not XCTest.
 - Use UUID-named temporary directories for filesystem tests.
 - Mark suites that mutate process-wide environment or shared state with
-  `@Suite(.serialized)`.
+  `@Suite(.serialized)`. Suites always run concurrently with one another:
+  `.serialized` only orders the cases of one suite, so a test must not depend on
+  running alone.
+- A timed wait only bounds a failure: poll for the condition with a generous
+  deadline (30 seconds) instead of sleeping for a fixed time, and wait for a
+  transition to have happened rather than for one exact sequence of events.
+- Every suite runs in parallel, on macOS and Linux, locally and in CI.
+  `--no-parallel` is a diagnosis tool, never a gate: a test that does not
+  finish next to the others is fixed, or removed if the behavior it covers is
+  no longer worth the cost. Do not add `.serialized` to hide a failure.
+- Do not add a test that builds a real Swift package from the test process:
+  several of them run the compiler at once, and on a four-vCPU runner they
+  starve every other suite. Do not exec a fixture the test has just written
+  either: a sibling test forking at that moment can fail the exec with "Text
+  file busy". Feature packages are built and tested by their own
+  CI jobs (`standalone-features`), which is where their build coverage lives.
 - Never turn local runtime state (`~/.zencode`, or `ZENCODE_SUPPORT_DIRECTORY`)
   into repository fixtures.
 

@@ -62,7 +62,7 @@ enum ACPTelegramTestSupport {
     /// Polls `predicate` every 10 ms for up to `timeout`; `true` once it holds.
     @discardableResult
     static func waitUntil(
-        timeout: Duration = .seconds(10),
+        timeout: Duration = .seconds(30),
         _ predicate: @Sendable () async -> Bool
     ) async -> Bool {
         let clock = ContinuousClock()
@@ -309,7 +309,7 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
 
     /// Waits until a sent text satisfies `predicate` and returns it.
     func waitForSentMessage(
-        timeout: Duration = .seconds(10),
+        timeout: Duration = .seconds(30),
         where predicate: @Sendable (ACPTelegramSentMessage) -> Bool
     ) async -> ACPTelegramSentMessage? {
         let clock = ContinuousClock()

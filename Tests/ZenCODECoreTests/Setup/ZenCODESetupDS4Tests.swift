@@ -82,7 +82,7 @@ final class ScriptedDS4ModelMenu {
     }
 }
 
-@Suite("ZenCODE setup DS4", .serialized)
+@Suite("ZenCODE setup DS4")
 struct ZenCODESetupDS4Tests {
     static let qwenPath = "gguf/Qwen3.8-Flash-Next-Q2.gguf"
     static let customPath = "gguf/DeepSeek-V4.1-Flash-Custom-IQ3_XXS.gguf"

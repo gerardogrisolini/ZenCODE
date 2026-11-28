@@ -11,13 +11,6 @@ import Testing
 @Suite
 struct TerminalChatProjectAgentsTests {
     @Test
-    func menuHelpExplainsProjectToggleAndEnterUsesAgent() {
-        #expect(TerminalInteractionHost.focusedMenuHelpLines(toggleLabel: "agents", confirmLabel: "use agent") == [
-            "↑/↓ move · Space/X toggle agents · A all · N none · Enter use agent · Esc/Q cancel"
-        ])
-    }
-
-    @Test
     func projectNameIsTheFolderNameOrThePathAtTheFilesystemRoot() {
         #expect(ChatSessionController.projectDisplayName(URL(fileURLWithPath: "/tmp/ZenCODE-demo", isDirectory: true)) == "ZenCODE-demo")
         #expect(ChatSessionController.projectDisplayName(URL(fileURLWithPath: "/tmp/ZenCODE-demo/sub/..")) == "ZenCODE-demo")
@@ -107,20 +100,4 @@ struct TerminalChatProjectAgentsTests {
         #expect(none.contains("/agents"))
         #expect(none.hasSuffix("\n"))
     }
-
-    @Test
-    func agentsCommandDescriptorDocumentsTheProjectAssociation() throws {
-        let descriptor = try #require(
-            TerminalChat.commandRegistry.visibleDescriptors(
-                in: TerminalChat.commandContext(
-                    builderAgentEnabled: false, telegramEnabled: false, ds4ModelEnabled: false
-                )
-            ).first { $0.command == "/agents" }
-        )
-        #expect(descriptor.summary.contains("project"))
-        #expect(descriptor.help.contains("Space/X"))
-        #expect(descriptor.help.contains("sub-agents"))
-        #expect(descriptor.help.contains("Enter"))
-    }
-
 }

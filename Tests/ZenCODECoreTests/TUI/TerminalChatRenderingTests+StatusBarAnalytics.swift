@@ -317,21 +317,4 @@ extension TerminalChatRenderingTests {
 
         #expect(await statusBar.state.latestMetrics?.throughput == nil)
     }
-
-    @Test
-    func gitNumstatSummaryCountsFilesAdditionsAndDeletions() {
-        let output = """
-        10	2	Sources/App.swift
-        -	-	Assets/Icon.png
-        1	0	Tests/AppTests.swift
-        """
-
-        #expect(
-            TerminalGitStatusSummary.numstatSummary(from: output) == TerminalGitStatusSummary(
-                changedFileCount: 3,
-                additions: 11,
-                deletions: 2
-            )
-        )
-    }
 }

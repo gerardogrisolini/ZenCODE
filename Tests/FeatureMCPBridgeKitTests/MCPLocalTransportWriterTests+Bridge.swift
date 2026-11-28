@@ -200,7 +200,7 @@ extension MCPLocalTransportWriterTests {
 
         // The termination handler runs asynchronously; wait for it to settle.
         var settled = false
-        for _ in 0..<200 where !settled {
+        for _ in 0..<1_500 where !settled {
             if await client.process == nil, await client.writer == nil {
                 settled = true
                 break
@@ -228,7 +228,7 @@ extension MCPLocalTransportWriterTests {
             try await client.callTool(named: "after-reconnect", arguments: [:])
         }
         var observedOnTheWire = false
-        for _ in 0..<200 where !observedOnTheWire {
+        for _ in 0..<1_500 where !observedOnTheWire {
             let received = (try? String(contentsOf: receivedURL, encoding: .utf8)) ?? ""
             if received.contains("after-reconnect") {
                 observedOnTheWire = true

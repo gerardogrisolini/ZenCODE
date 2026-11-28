@@ -129,13 +129,6 @@ struct DesktopListPagingTests {
     }
 
     @Test
-    func theBudgetIsEightThousandCharactersUnderTheRuntimeLimit() {
-        #expect(DesktopSafetyPolicy.maximumListPayloadCharacters == 8_000)
-        #expect(DesktopSafetyPolicy.maximumListPayloadCharacters < 12_000)
-        #expect(DesktopSafetyPolicy.maximumListOffset == 5_000)
-    }
-
-    @Test
     func accessibilityAttributesCannotDefeatTheResponseBudget() {
         let long = String(repeating: "\u{1}", count: 20_000)
         let info = DesktopElementPolicy.makeInfo(

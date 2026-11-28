@@ -10,6 +10,7 @@ import Foundation
 @testable import ZenCODERuntime
 import Testing
 
+// The legacy override is process-global and must not overlap other cases here.
 @Suite(.serialized)
 struct AppStorageDirectoryTests {
     @Test
@@ -162,6 +163,7 @@ struct AppStorageDirectoryTests {
         )
     }
 
+    // This legacy global override is brief; other suites must use task-scoped support directories.
     @Test
     func explicitOverridesStillWinOverTheTestHarnessSandbox() throws {
         let directory = FileManager.default.temporaryDirectory

@@ -3,7 +3,7 @@ import FeatureKit
 import Testing
 @testable import swift_tools_feature
 
-@Suite(.serialized)
+@Suite
 struct SwiftTestToolTests {
     @Test
     func additionalArgumentsRemainSeparateArgvElements() {

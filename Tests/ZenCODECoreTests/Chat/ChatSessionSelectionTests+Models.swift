@@ -6,7 +6,6 @@
 //  (`/models`, `/think`), how a choice is persisted to settings.json (or kept
 //  in the session when the environment does not persist the selections), and the
 //  model menu on a host without a single-choice capability.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

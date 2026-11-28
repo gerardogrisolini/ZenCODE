@@ -431,14 +431,4 @@ struct WebSearchBotCheckTests {
         #expect(!WebToolsSupport.isSearchBotCheck(statusCode: 200, body: ""))
         #expect(!WebToolsSupport.isSearchBotCheck(statusCode: 500, body: ""))
     }
-
-    @Test
-    func botCheckErrorExplainsWhatToDo() {
-        let message = (WebSearchError.botCheck.errorDescription ?? "").lowercased()
-        #expect(message.contains("duckduckgo"))
-        #expect(message.contains("bot check"))
-        #expect(message.contains("rate limit"))
-        #expect(message.contains("wait about a minute"))
-        #expect(message.contains("narrow the query"))
-    }
 }

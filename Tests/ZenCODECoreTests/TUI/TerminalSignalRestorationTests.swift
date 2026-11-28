@@ -13,9 +13,12 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-/// Serialized: the dispatch-installer tests mutate process-wide signal
-/// dispositions.
-@Suite("TerminalSignalRestoration", .serialized)
+/// Not serialized: the two tests that install the real dispatch handlers
+/// mutate the process-wide dispositions of SIGINT/SIGTERM/SIGHUP (`SIG_IGN`,
+/// which a child spawned meanwhile by another suite would inherit), so they run
+/// in a child process (exit tests) and this process never touches the signals.
+/// The other tests inject the installer and share no state.
+@Suite("TerminalSignalRestoration")
 struct TerminalSignalRestorationTests {
     private final class Owner {}
 
@@ -109,52 +112,76 @@ struct TerminalSignalRestorationTests {
     }
 
     @Test("Dispatch installer ignores the signals while armed and restores previous dispositions")
-    func dispatchInstallerRestoresDispositions() {
-        let signals = TerminalSignalRestoration.terminatingSignals
-        let before = signals.map(Self.dispositionValue)
-        let uninstall = TerminalSignalRestoration.installDispatchHandlers { _ in
-            Issue.record("no signal is sent by this test")
+    func dispatchInstallerRestoresDispositions() async {
+        await #expect(processExitsWith: .success) {
+            let signals = TerminalSignalRestoration.terminatingSignals
+            let before = signals.map(TerminalSignalRestorationTests.dispositionValue)
+            let uninstall = TerminalSignalRestoration.installDispatchHandlers { _ in
+                TerminalSignalRestorationTests.exitReporting(["a signal arrived: none is sent by this test"])
+            }
+            var problems = TerminalSignalRestorationTests.armedProblems(signals: signals, before: before)
+            uninstall()
+            if signals.map(TerminalSignalRestorationTests.dispositionValue) != before {
+                problems.append("the dispositions were not restored by the uninstall")
+            }
+            TerminalSignalRestorationTests.exitReporting(problems)
         }
-        Self.expectArmed(signals: signals, before: before)
-        uninstall()
-        #expect(signals.map(Self.dispositionValue) == before)
     }
 
     /// On Linux libdispatch replaces `SIG_IGN` with its own handler some time
     /// after the source is resumed and never removes it. Uninstalling after
     /// that replacement must still restore the previous dispositions.
     @Test("Dispatch installer restores dispositions after libdispatch registered its handler")
-    func dispatchInstallerRestoresAfterLateRegistration() async throws {
-        let signals = TerminalSignalRestoration.terminatingSignals
-        let before = signals.map(Self.dispositionValue)
-        let uninstall = TerminalSignalRestoration.installDispatchHandlers { _ in
-            Issue.record("no signal is sent by this test")
+    func dispatchInstallerRestoresAfterLateRegistration() async {
+        await #expect(processExitsWith: .success) {
+            let signals = TerminalSignalRestoration.terminatingSignals
+            let before = signals.map(TerminalSignalRestorationTests.dispositionValue)
+            let uninstall = TerminalSignalRestoration.installDispatchHandlers { _ in
+                TerminalSignalRestorationTests.exitReporting(["a signal arrived: none is sent by this test"])
+            }
+            // Give libdispatch's manager thread time to register the sources.
+            try? await Task.sleep(for: .milliseconds(200))
+            var problems = TerminalSignalRestorationTests.armedProblems(signals: signals, before: before)
+            uninstall()
+            if signals.map(TerminalSignalRestorationTests.dispositionValue) != before {
+                problems.append("the dispositions were not restored by the uninstall")
+            }
+            TerminalSignalRestorationTests.exitReporting(problems)
         }
-        // Give libdispatch's manager thread time to register the sources.
-        try await Task.sleep(for: .milliseconds(200))
-        Self.expectArmed(signals: signals, before: before)
-        uninstall()
-        #expect(signals.map(Self.dispositionValue) == before)
+    }
+
+    /// Ends the child process of an exit test: with status 0 when `problems`
+    /// is empty, otherwise naming each one on standard error first. `#expect`
+    /// is not used in the child, whose issues the parent would not see.
+    private static func exitReporting(_ problems: [String]) -> Never {
+        for problem in problems {
+            FileHandle.standardError.write(Data((problem + "\n").utf8))
+        }
+        exit(problems.isEmpty ? EXIT_SUCCESS : EXIT_FAILURE)
     }
 
     /// Previously ignored signals stay ignored. The others are `SIG_IGN` with
     /// delivery routed through the dispatch source; on Linux libdispatch may
     /// already have replaced `SIG_IGN` with its own handler, which still never
     /// applies the default (terminating) action.
-    private static func expectArmed(signals: [Int32], before: [Int]) {
+    private static func armedProblems(signals: [Int32], before: [Int]) -> [String] {
         let ignored = ignoredValue
+        var problems: [String] = []
         for (signalNumber, previous) in zip(signals, before) {
             let current = dispositionValue(signalNumber)
             if previous == ignored {
-                #expect(current == ignored, "signal \(signalNumber) must stay ignored")
+                if current != ignored { problems.append("signal \(signalNumber) must stay ignored") }
                 continue
             }
             #if os(Linux)
-            #expect(current != defaultValue, "signal \(signalNumber) must not use its default action while armed")
+            if current == defaultValue {
+                problems.append("signal \(signalNumber) must not use its default action while armed")
+            }
             #else
-            #expect(current == ignored, "signal \(signalNumber) must be SIG_IGN while armed")
+            if current != ignored { problems.append("signal \(signalNumber) must be SIG_IGN while armed") }
             #endif
         }
+        return problems
     }
 
     private static var ignoredValue: Int { unsafeBitCast(SIG_IGN, to: Int.self) }

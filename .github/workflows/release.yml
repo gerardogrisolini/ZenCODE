@@ -132,12 +132,10 @@ jobs:
         run: swift build --target ZenCODECore
 
       - name: Test
-        # Must match CI: several lifecycle suites exercise Foundation.Process,
-        # whose exit coordination and signal state are process-global. Running
-        # cases concurrently can park that shared manager and cascade timeouts,
-        # stalling this step until the job timeout and skipping the packaging
-        # and publishing steps below.
-        run: swift test --no-parallel
+        # Must match CI: Swift Testing runs the suites of the root package in
+        # parallel. Suites that share process-wide state use .serialized, and no
+        # test may depend on running alone.
+        run: swift test
 
       - name: Build release product
         run: swift build -c release --product zen

@@ -6,7 +6,7 @@ import Testing
 /// Two independent engine actors model separate `zen` processes. Their shared
 /// JSON persistence must reload the graph under the OS-level lock, otherwise
 /// the later atomic replacement would discard the first process's write.
-@Suite(.serialized)
+@Suite
 struct MemoryPersistenceMultiprocessTests {
     /// This deliberately launches the SwiftPM helper instead of merely making
     /// two actors: actor isolation cannot prove that the advisory lock survives

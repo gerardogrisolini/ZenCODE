@@ -10,7 +10,7 @@ import Foundation
 @testable import ZenCODERuntime
 import Testing
 
-@Suite(.serialized)
+@Suite
 struct RemoteModelCatalogClientTests {
     @Test
     func providerModelCatalogRequestTargetsConfiguredProvider() throws {

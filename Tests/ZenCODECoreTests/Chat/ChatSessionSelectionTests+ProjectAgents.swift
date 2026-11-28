@@ -5,7 +5,6 @@
 //  The second part of the selection tests: the project agents association,
 //  the workspace access a selection needs, and the agent selection command
 //  (`/agents`), with the helpers only these tests use.
-//  Tests of this serialized suite run in file-name order: keep the name.
 //
 
 import Foundation

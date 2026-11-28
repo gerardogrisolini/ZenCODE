@@ -7,7 +7,7 @@ import Testing
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("ChatGPTSubscriptionWebSocketPool HTTP teardown", .serialized)
+@Suite("ChatGPTSubscriptionWebSocketPool HTTP teardown")
 struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {
     @Test("owned pool shutdown tears down an open HTTP stream and its transport")
     func ownedPoolShutdownTearsDownOpenHTTPStream() async throws {

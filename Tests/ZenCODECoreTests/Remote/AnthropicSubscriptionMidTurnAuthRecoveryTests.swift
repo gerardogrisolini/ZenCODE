@@ -15,7 +15,7 @@ import Testing
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 
-@Suite("Anthropic Subscription mid-turn auth recovery", .serialized)
+@Suite("Anthropic Subscription mid-turn auth recovery")
 struct AnthropicSubscriptionMidTurnAuthRecoveryTests {
     private static let textResponse = """
     data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}

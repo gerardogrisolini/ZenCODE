@@ -10,6 +10,7 @@ import Glibc
 #endif
 
 extension LocalToolsSerialGroup {
+// Serialized: the cases read or mutate the process-global OperationMutationUncertainty (see LocalToolsSerialGroup).
 @Suite(.serialized)
 struct OperationFileChangeTests {
     private func workspace() throws -> URL {
@@ -144,6 +145,19 @@ private extension LocalToolsSerialGroup.OperationFileChangeTests {
         }
     }
 
+    /// `true` when the operation completed; `false` once it is inside its
+    /// special-file I/O (or the budget ran out, which `enteredSpecialIO` reports).
+    func waitForCompletionOrSpecialIO(_ semaphore: DispatchSemaphore) async throws -> Bool {
+        try await LocalIOOffloader.run {
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+                if semaphore.wait(timeout: .now() + 0.005) == .success { return true }
+                if OperationMutationUncertainty.snapshot == nil { return false }
+            }
+            return false
+        }
+    }
+
     func isCocoaPermissionDeniedByPOSIXAccess(_ error: any Error) -> Bool {
         let failure = error as NSError
         // Corelibs stores NSUnderlyingErrorKey as a native POSIXError. Extract
@@ -179,8 +193,10 @@ extension LocalToolsSerialGroup.OperationFileChangeTests {
             }
         }
         // Foundation may reject a FIFO read immediately instead of waiting for
-        // a writer. Observe completion without connecting a peer first.
-        let completedBeforeProbe = try await waitForCompletion(done)
+        // a writer. Wait, without connecting a peer, until the operation either
+        // completes or enters its unlocked special I/O (the uncertainty window
+        // opens right before the blocking open), not for a guessed delay.
+        let completedBeforeProbe = try await waitForCompletionOrSpecialIO(done)
         let enteredSpecialIO = !completedBeforeProbe && OperationMutationUncertainty.snapshot == nil
         let normalRecorder = OperationFileChangeRecorder()
         let normalDone = DispatchSemaphore(value: 0)

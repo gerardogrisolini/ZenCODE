@@ -142,7 +142,7 @@ struct ZenCronRunnerTests {
     /// elapsed without it.
     private static func waitForMarker(
         _ markerURL: URL,
-        timeout: Duration = .seconds(10)
+        timeout: Duration = .seconds(30)
     ) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
@@ -238,7 +238,8 @@ struct ZenCronRunnerTests {
         #expect(markerAppeared)
         #expect(outcome.wasTerminated)
         #expect(outcome.exitStatus != 0)
-        #expect(clock.now - started < .seconds(15))
+        // The command sleeps for 30 s: finishing well before it shows the cancellation did not wait for it.
+        #expect(clock.now - started < .seconds(25))
     }
 
     @Test("a child that ignores SIGTERM is killed and its survivors are not awaited")
@@ -261,7 +262,7 @@ struct ZenCronRunnerTests {
         // once the trap is in place, so SIGTERM is always ignored.
         let task = Task {
             try await runner.run(
-                cronCommand: "trap '' TERM; \(Self.createMarkerCommand(markerURL)); sleep 15",
+                cronCommand: "trap '' TERM; \(Self.createMarkerCommand(markerURL)); sleep 40",
                 environment: ZenCronEnvironment.minimal(home: home),
                 homeDirectory: home
             )
@@ -273,6 +274,7 @@ struct ZenCronRunnerTests {
         #expect(markerAppeared)
         #expect(outcome.wasTerminated)
         #expect(outcome.exitStatus == 128 + SIGKILL)
-        #expect(clock.now - started < .seconds(12))
+        // The orphaned sleep holds the pipes for 40 s: finishing well before it shows it was not awaited.
+        #expect(clock.now - started < .seconds(30))
     }
 }

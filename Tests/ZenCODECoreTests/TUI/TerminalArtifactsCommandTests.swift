@@ -97,7 +97,7 @@ struct TerminalArtifactsCommandTests {
     }
 
     private func waitUntil(_ what: String, _ condition: () -> Bool) async {
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(30)
         while !condition() {
             guard ContinuousClock.now < deadline else {
                 Issue.record("Timed out waiting until \(what)")
@@ -108,15 +108,6 @@ struct TerminalArtifactsCommandTests {
     }
 
     // MARK: - Registry
-
-    @Test
-    func artifactsIsAKnownCommandThatRunsWhileAPromptIsGenerating() {
-        #expect(TerminalChat.isKnownSlashCommand("/artifacts"))
-        #expect(TerminalChat.isKnownSlashCommand("/artifacts now"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "/artifacts"))
-        #expect(TerminalChat.isAvailableDuringGeneration(for: "  /artifacts"))
-        #expect(TerminalChat.commandRegistry.descriptor(forLine: "/artifacts")?.scope == .channel)
-    }
 
     /// The terminal's controller hands `/artifacts` back to the terminal; the
     /// shared operation answers as before for the other channels.

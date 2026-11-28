@@ -123,7 +123,7 @@ struct TerminalSharedChatReaderDockTests {
     }
 
     private func waitUntil(
-        timeout: Duration = .seconds(5),
+        timeout: Duration = .seconds(30),
         _ condition: @Sendable () async -> Bool
     ) async -> Bool {
         let deadline = ContinuousClock.now + timeout

@@ -13,7 +13,7 @@ import ZenCODECore
 @testable import ZenAppSession
 
 @MainActor
-@Suite(.serialized)
+@Suite
 struct ZenFullAccessTests {
     private static let fullAccessText = "Mode: full access — local.exec commands run without approval.\n"
     private static let defaultText = "Mode: default — local.exec approvals restored.\n"
