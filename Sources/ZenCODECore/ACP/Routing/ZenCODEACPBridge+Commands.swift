@@ -23,6 +23,8 @@ enum ACPCommandPromptPurpose: Sendable {
 enum ACPCommandTurnRoute: Sendable {
     case generate(prompt: String, purpose: ACPCommandPromptPurpose, prelude: String? = nil)
     case immediate(String)
+    /// Write the answer first, then force a fresh Tasks plan before the reply.
+    case immediateTasks(String)
 
     fileprivate func addingEditorContext(_ editorContext: String?) -> Self {
         guard case let .generate(prompt, purpose, prelude) = self else { return self }

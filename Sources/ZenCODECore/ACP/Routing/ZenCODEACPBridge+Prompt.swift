@@ -353,7 +353,7 @@ extension ZenCODEACPBridge {
             throw CancellationError()
         }
         switch commandRoute {
-        case let .immediate(message):
+        case let .immediate(message), let .immediateTasks(message):
             await writer.sendSessionUpdate(
                 sessionID: turn.sessionID,
                 update: Self.textChunkJSONUpdate(
@@ -362,6 +362,15 @@ extension ZenCODEACPBridge {
                     messageID: Self.newMessageID()
                 )
             )
+            if case .immediateTasks = commandRoute {
+                // `/tasks` presents the graph it answers with after its text,
+                // even when the section already shows it; a prompt the session
+                // no longer holds once the plan is written ends `cancelled`.
+                await publishTaskGraphPlan(sessionID: turn.sessionID, epoch: turn.epoch, force: true)
+                guard await reservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) != nil else {
+                    throw CancellationError()
+                }
+            }
             return .finished(stopReason: "end_turn")
         case let .generate(modelPrompt, purpose, prelude):
             // The prompt the model gets and the history records. A session saved

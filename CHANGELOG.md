@@ -12,6 +12,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- ACP: `/tasks` sends its text before publishing the Tasks plan, while keeping
+  both updates before the prompt's final response.
+
 - ACP v1: `initialize` no longer returns `configOptions` outside its schema.
   Selected-agent `agentId` and `agentName` are informational fields in the
   session result's `_meta` alongside `models`; `session/new` returns its

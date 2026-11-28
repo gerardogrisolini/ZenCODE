@@ -352,6 +352,44 @@ struct ACPPromptTurnExitCharacterizationTests {
         await fixture.bridge.shutdown()
     }
 
+    @Test(arguments: [false, true])
+    func tasksTextReachesTheWireBeforeThePlanWriteCompletes(cancelDuringPlan: Bool) async throws {
+        let fixture = try await Self.makeFixture()
+        let (host, slotID, _) = try #require(await fixture.bridge.promptExitSlot(sessionID: fixture.sessionID))
+        _ = try await fixture.bridge.sessionRunner.taskOrchestrator.createTasks(
+            sessionID: fixture.sessionID,
+            tasks: [TaskDefinition(id: "first", title: "Show the task immediately")]
+        )
+        let start = fixture.transport.count
+        let hold = fixture.transport.holdWriter { message in
+            message.objectValue?["params"]?.objectValue?["update"]?.objectValue?["sessionUpdate"]
+                == .string("plan")
+        }
+        defer { hold.release.signal() }
+        let prompt = Task { await Self.send(fixture, id: 2, text: "/tasks") }
+        await hold.reached.wait()
+
+        let trace = fixture.transport.trace(of: 2, sessionID: fixture.sessionID, from: start)
+        #expect(trace.count == 2)
+        #expect(trace.first?.hasPrefix("agent_message_chunk: ") == true)
+        #expect(trace.first?.contains("Show the task immediately") == true)
+        #expect(trace.last == "plan")
+        #expect(fixture.transport.replies(to: 2).isEmpty)
+        #expect(await fixture.backend.prompts == ["warm up"])
+
+        if cancelDuringPlan {
+            // The blocked writer cannot acknowledge session/cancel yet. Drop the
+            // reservation with the same host operation the handler uses.
+            #expect(await host.cancelPrompt(in: slotID) != nil)
+        }
+        hold.release.signal()
+        await prompt.value
+        let stopReason = cancelDuringPlan ? "cancelled" : "end_turn"
+        #expect(fixture.transport.trace(of: 2, sessionID: fixture.sessionID, from: start)
+            == trace + ["stopReason: \(stopReason)"])
+        await fixture.bridge.shutdown()
+    }
+
     @Test
     func aCancelThatLandsBeforeTheRoutingEndsThePromptCancelledWithoutRunningTheModel() async throws {
         // The session's first prompt: it names the session before it routes.

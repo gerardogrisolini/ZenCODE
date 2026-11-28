@@ -58,12 +58,12 @@ extension ZenCODEACPBridge {
            Self.presentsGraph(after: outcome.notices) {
             do {
                 let overview = try await ChatTaskGraphOverview.current(in: sessionRunner, sessionID: sessionID)
-                await publishTasksPlan(overview?.graph, sessionID: sessionID, epoch: epoch)
                 if let overview {
                     texts.append(Self.taskGraphText(overview))
                 } else if texts.isEmpty {
                     texts.append(Self.acpText(for: .noTaskGraph, context: .tasks))
                 }
+                return .immediateTasks(texts.joined(separator: "\n\n"))
             } catch {
                 // An unavailable snapshot is not an authoritative clear: the
                 // failure is the answer, and no plan is published.
@@ -114,27 +114,5 @@ extension ZenCODEACPBridge {
                 ansiEnabled: false
             )
         ).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Sends the `plan` update of `graph` — the client's Tasks section — and
-    /// acknowledges it as presented, so the next publication does not send the
-    /// same plan again. The command presents the graph it answers with even when
-    /// the section already shows it, which is what makes the answer and the
-    /// section agree after a retry, a cancellation, or a clear.
-    private func publishTasksPlan(
-        _ graph: TaskGraphSnapshot?,
-        sessionID: String,
-        epoch: UInt64
-    ) async {
-        guard let session = liveSession(id: sessionID, epoch: epoch) else { return }
-        // A prompt that owns the presentation publishes the section itself,
-        // through its pipeline; this command never overtakes it.
-        guard session.promptUpdatePipeline == nil else { return }
-        guard let plan = await session.taskPresentation.planToPresent(for: graph, force: true) else {
-            return
-        }
-        guard liveSession(id: sessionID, epoch: epoch) != nil else { return }
-        await writer.sendSessionUpdate(sessionID: sessionID, update: plan)
-        await session.taskPresentation.acknowledge(plan)
     }
 }
