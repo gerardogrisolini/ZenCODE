@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.2.3] - 2026-11-28
+
+### Breaking
+
+- The Swift ACP API is outside the Chat SemVer contract; this is not a change to
+  the Chat API. `ZenCODEACPBridge.sendUserMessageChunk` now requires `messageID`,
+  and `promptAttachments` is now async. `sessionLifecycleResult` adds
+  `includeSessionID` with a default of `true`, so direct calls remain compatible.
+
 ### Changed
 
 - ACP: `/tasks` sends its text before publishing the Tasks plan, while keeping
@@ -47,7 +56,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   left of the panel's bottom border, next to the `rows a–b/n` range, and the
   border shows `Chat: N new` while shared-chat messages are unread; messages
   that arrive while the panel is open stay unread.
-- ACP: tool calls are described with standard ACP v1 fields again, 
+- ACP: tool calls are described with standard ACP v1 fields again,
   because clients read `_meta` for nothing. This reverts the
   earlier change that made `rawInput` `_meta.rawInput`: the `tool_call` carries
   the tool's arguments as `rawInput` and the programmatic tool name as `name`,
@@ -7025,7 +7034,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.2...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.3...HEAD
+[6.2.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.2...v6.2.3
 [6.2.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...v6.2.0
