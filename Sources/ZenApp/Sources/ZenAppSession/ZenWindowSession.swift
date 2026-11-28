@@ -545,10 +545,10 @@ public final class ZenWindowSession: Identifiable {
             // runtime session and load the model. Reading the tool descriptors
             // then uses the live backend, including runtime-discovered feature
             // tools such as Xcode, whose discovery may request authorization.
+            // The hooks start the first session's task-graph observer when
+            // the session is created (`sessionDidCreate(reason:)`) and move
+            // it with the session from now on.
             try await controller.startInitialSession()
-            // The first session's observer; the hooks move it with the
-            // session from now on.
-            await controller.startTaskGraphObserver()
             let window = ZenWindowSession(
                 id: id,
                 workspace: workspace,

@@ -26,7 +26,11 @@ import ZenCODECore
 /// step of `/sessions new` and of a load (`.newSessionWillStart`,
 /// `.savedSessionWillLoad`) stops the observer of the controller being
 /// replaced, and `.newSessionDidStart` and `.savedSessionDidRestore` start
-/// the new controller's, so exactly one observer runs. The steps that change
+/// the new controller's, so exactly one observer runs. A session the
+/// controller creates anew (`sessionDidCreate(reason:)`: the first one, a
+/// model change, an agent switch) gets its observer again, because a model
+/// change and an agent switch stop the backend first, which ends the graph
+/// events of every observer of the runner. The steps that change
 /// what the status bar shows (a selection, an agent, a session created anew, a
 /// new or loaded session) call ``statusFactsHandler``; the steps of a
 /// saved-session load call ``savedSessionLoadStepHandler``.
@@ -108,6 +112,9 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
     }
 
     func sessionDidCreate(reason: ChatSessionRecreationReason) async {
+        // As the terminal does: the observer subscribes again to the graph
+        // events, which the stopped backend ended.
+        await currentController?.startTaskGraphObserver()
         statusFactsHandler?()
     }
 

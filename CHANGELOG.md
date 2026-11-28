@@ -22,6 +22,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   margins, and stays fixed while the agent's conversation scrolls under it,
   as in the terminal.
 
+### Fixed
+
+- macOS app: after a model change or an agent switch the conversation shows
+  the task-graph card (`🫧 Tasks`) again while the `tasks.*` tools change the
+  graph, as the terminal prints its section, instead of only after `/tasks`.
+  The window now binds the task-graph observer to the session created anew,
+  whose stopped backend had ended the graph events.
+
 ## [6.2.3] - 2026-11-28
 
 ### Breaking

@@ -352,6 +352,61 @@ extension ZenWindowSessionTests {
         }
     }
 
+    @Test("After an agent or a model switch a turn still shows its task card: the session created anew gets the observer again, as in the terminal")
+    func taskCardAfterTheSessionIsCreatedAnew() async throws {
+        let models = Self.defaultModels + [
+            AgentSettingsModelManifest(
+                id: "zen-app-model-2",
+                kind: .remoteAPI,
+                modelID: "local/zen-app-model-2"
+            ),
+        ]
+        try await withRuntime(models: models) { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            #expect(await window.waitUntilIdle())
+            let orchestrator = await window.runner.taskOrchestrator
+            let sessionID = window.current.sessionID
+
+            // An agent switch stops the backend, which ends the graph events
+            // of every observer, and creates the session anew.
+            window.draft = "/agents tester"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.snapshot?.selection.agent?.id == "tester" })
+            #expect(window.current.sessionID == sessionID)
+            try? await orchestrator.registerSession(id: sessionID, workingDirectory: workspace)
+            await backend.hold()
+            window.draft = "After the agent switch"
+            window.submitDraft()
+            await backend.waitUntilHeld()
+            #expect(await eventually { window.isGenerating })
+            _ = try await orchestrator.createTasks(
+                sessionID: sessionID,
+                tasks: [TaskDefinition(title: "A"), TaskDefinition(title: "B")]
+            )
+            #expect(await eventually { Self.taskCards(in: window.transcript).count == 1 })
+            #expect(Self.taskCards(in: window.transcript).first.flatMap(Self.taskCount) == 2)
+            await backend.release()
+            #expect(await window.waitUntilIdle())
+
+            // A model switch does the same.
+            let change = try await window.current.controller.selectModel(id: "zen-app-model-2")
+            #expect(change.change == .sessionRecreated)
+            #expect(window.current.sessionID == sessionID)
+            await backend.hold()
+            window.draft = "After the model switch"
+            window.submitDraft()
+            await backend.waitUntilHeld()
+            #expect(await eventually { window.isGenerating })
+            _ = try await orchestrator.createTasks(sessionID: sessionID, tasks: [TaskDefinition(title: "C")])
+            #expect(await eventually { Self.taskCards(in: window.transcript).count == 2 })
+            #expect(Self.taskCards(in: window.transcript).last.flatMap(Self.taskCount) == 3)
+            await backend.release()
+            #expect(await window.waitUntilIdle())
+            await runtime.shutdown()
+        }
+    }
+
     @Test("The window presenter publishes the sub-agent overview around agent.* calls")
     func subAgentOverviewReachesTheReducer() async throws {
         try await withRuntime { runtime, backend, workspace in
