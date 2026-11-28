@@ -259,10 +259,12 @@ close button. The bar scrolls sideways when the tabs do not fit. Tabs open
 only when you click: a sub-agent never opens one by itself, and closing the
 selected tab selects the tab after it, else the one before it.
 
-A sub-agent tab is read-only. A card at its top shows the agent: its status,
-name, profile, task and attempt, model and token counts, the elapsed
-time (live while it works, else its duration), and its latest error. Under it
-is the agent's conversation, with the rows of the chat: the brief and the
+A sub-agent tab is read-only. A card at its bottom, where the Chat tab has the
+composer, shows the agent: its status, name, profile, task and attempt, model
+and token counts, the elapsed time (live while it works, else its duration),
+and its latest error. The card has the glass of the composer and stays still
+while the conversation scrolls under it. Above it is the agent's
+conversation, with the rows of the chat: the brief and the
 messages it received, as prompts, its reasoning, its text, and its tool calls
 with their results. While the agent works, the last row is its reasoning in
 progress, the whole reasoning of the current phase growing paragraph after

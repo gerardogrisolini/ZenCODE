@@ -10,6 +10,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- TUI: in the `/subagent` detail and in a file's `/artifacts` detail the
+  header (the agent's block, or the file's status, path, counts, turn and
+  explanation) now sits at the bottom of the panel, just above its bottom
+  border, where the main chat has the input panel, and stays fixed while the
+  transcript or the diff scrolls.
+- macOS app: the detail card of a sub-agent tab now sits at the bottom of the
+  tab, where the Chat tab has the composer, with the composer's glass and
+  margins, and stays fixed while the agent's conversation scrolls under it,
+  as in the terminal.
+
 ## [6.2.3] - 2026-11-28
 
 ### Breaking

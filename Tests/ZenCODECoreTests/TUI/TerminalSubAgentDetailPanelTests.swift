@@ -203,12 +203,35 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(TerminalSubAgentDetailPanel().bodyCapacity(frameRows: 12) == 10)
 
         let lines = plain(panel.frameLines(rows: 12, columns: 20))
-        #expect(lines[1...4].map(content) == ["h-0", "h-1", "h-2", "h-3"])
-        #expect(lines[5] == "├" + String(repeating: "─", count: 18) + "┤")
-        #expect(lines[6...10].allSatisfy { content($0).isEmpty })
+        #expect(lines[1...5].allSatisfy { content($0).isEmpty })
+        #expect(lines[6] == "├" + String(repeating: "─", count: 18) + "┤")
+        #expect(lines[7...10].map(content) == ["h-0", "h-1", "h-2", "h-3"])
 
         // Without room for a header row the separator is omitted too.
         #expect(!plain(panel.frameLines(rows: 5, columns: 20)).contains { $0.hasPrefix("├") })
+    }
+
+    @Test func headerStaysBelowBodyAndPaddingWhileBodyScrolls() {
+        let separator = "├" + String(repeating: "─", count: 28) + "┤"
+        var panel = TerminalSubAgentDetailPanel(title: "", headerRows: ["header-1", "header-2"], bodyRows: numberedRows(2))
+        let short = plain(panel.frameLines(rows: 9, columns: 30))
+        #expect(short[0] == "╭" + String(repeating: "─", count: 28) + "╮")
+        #expect(short[1...4].map(content) == ["row-0", "row-1", "", ""])
+        #expect(short[5] == separator)
+        #expect(short[6...7].map(content) == ["header-1", "header-2"])
+        #expect(short[8] == plainBottomBorder(columns: 30))
+
+        panel.replace(headerRows: ["header-1", "header-2"], bodyRows: numberedRows(8), frameRows: 9)
+        let following = plain(panel.frameLines(rows: 9, columns: 30))
+        #expect(following[1...4].map(content) == ["row-4", "row-5", "row-6", "row-7"])
+        #expect(following[5...7] == short[5...7])
+        #expect(following[8].contains("rows 5–8/8"))
+
+        panel.apply(.top, frameRows: 9)
+        let scrolled = plain(panel.frameLines(rows: 9, columns: 30))
+        #expect(scrolled[1...4].map(content) == ["row-0", "row-1", "row-2", "row-3"])
+        #expect(scrolled[5...7] == short[5...7])
+        #expect(scrolled[8].contains("rows 1–4/8"))
     }
 
     @Test(arguments: [0, 1, 2, 3, 4, 5, 6, 9, 24], [5, 6, 13, 40, 120])

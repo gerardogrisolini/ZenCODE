@@ -53,6 +53,8 @@ public enum TerminalSubAgentDetailAction: Sendable, Equatable {
 /// The body capacity therefore depends only on the header and the frame
 /// height, never on the body length, so a growing transcript does not move
 /// the frame. `scrollOffset` and `isFollowing` always refer to `bodyRows`.
+/// The body window and its blank padding are above the separator and header;
+/// the header stays fixed immediately above the bottom border as the body scrolls.
 ///
 /// In ``Mode/choosing(entries:focusedIndex:)`` the body is the choice list
 /// instead of `bodyRows`, and the list knows nothing of what its entries
@@ -220,7 +222,8 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
 
     /// Draws the framed panel as exactly `rows` lines, each `columns` visible
     /// columns wide (at least the minimal 5-column frame). One row draws only
-    /// the top border, two rows draw both borders.
+    /// the top border, two rows draw both borders. The body and its padding
+    /// precede the separator and header, which sit above the bottom border.
     ///
     /// When the body exceeds its window the bottom border carries a
     /// right-aligned 1-based indicator: `rows a–b/n` for the body rows in
@@ -242,16 +245,16 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
         let layout = Self.layout(headerCount: headerRows.count, frameRows: rows)
         let window = bodyWindow(capacity: layout.bodyCapacity)
         var lines = [top]
-        if layout.headerCount > 0 {
-            lines += headerRows.prefix(layout.headerCount).map { Self.interiorLine($0, columns: columns) }
-            let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
-            lines.append(border + "├" + String(repeating: "─", count: columns - 2) + "┤" + reset)
-        }
         lines += window.rows.map { Self.interiorLine($0, columns: columns) }
         lines += Array(
             repeating: Self.interiorLine("", columns: columns),
             count: max(0, layout.bodyCapacity - window.rows.count)
         )
+        if layout.headerCount > 0 {
+            let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
+            lines.append(border + "├" + String(repeating: "─", count: columns - 2) + "┤" + reset)
+            lines += headerRows.prefix(layout.headerCount).map { Self.interiorLine($0, columns: columns) }
+        }
         lines.append(Self.bottomBorderLine(border, indicator: window.indicator, columns: columns))
         return lines
     }

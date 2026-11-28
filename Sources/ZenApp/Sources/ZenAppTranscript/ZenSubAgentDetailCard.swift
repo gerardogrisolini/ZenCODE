@@ -2,8 +2,8 @@
 //  ZenSubAgentDetailCard.swift
 //  ZenApp
 //
-//  The views of a sub-agent tab from this package: the detail card at its
-//  top and the live activity after its transcript.
+//  The views of a sub-agent tab from this package: the detail card, fixed at
+//  its bottom, and the live activity after its transcript.
 //
 
 import Foundation
@@ -11,14 +11,23 @@ import SwiftUI
 import ZenAppTheme
 import ZenCODECore
 
-/// The detail of one sub-agent, at the top of its tab, on a content card: the
+/// The detail of one sub-agent, fixed at the bottom of its tab where the
+/// conversation has the composer, on the glass container of the composer: the
 /// row of the sub-agent card (``ZenSubAgentsCard``) without the activity, so
 /// its status color, name and badge, the elapsed time (live while the agent
 /// works, else its duration), the profile, the task and attempt, the
 /// model and token counters, and the latest error. The tab shows the activity
 /// after the transcript instead (``ZenSubAgentLiveActivityView``).
+///
+/// The container is the composer's: a rounded rectangle of radius 20 with the
+/// `promptBackground` fill in Dark Mode only, a `promptBorder` border, and the
+/// Liquid Glass tinted with the accent. The card sits outside the scroll view,
+/// so the transcript scrolls under it, as it does under the composer.
 public struct ZenSubAgentDetailCard: View {
     private let snapshot: DirectSubAgentRuntime.AgentSnapshot
+
+    @Environment(\.zenPalette) private var palette
+    @Environment(\.colorScheme) private var colorScheme
 
     /// - Parameter snapshot: The agent's latest snapshot.
     public init(snapshot: DirectSubAgentRuntime.AgentSnapshot) {
@@ -30,8 +39,26 @@ public struct ZenSubAgentDetailCard: View {
         // padding.
         ZenSubAgentRow(snapshot: snapshot, showsActivity: false)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .zenContentCard(cornerRadius: 14, padding: 12 - ZenSubAgentRow.horizontalInset)
+            .padding(12 - ZenSubAgentRow.horizontalInset)
+            .background(
+                palette.promptBackground.opacity(colorScheme == .dark ? 0.65 : 0),
+                in: .rect(cornerRadius: Self.cornerRadius)
+            )
+            // The border is part of the glass's content, as in the composer, so
+            // the glass renders both alike.
+            .overlay {
+                RoundedRectangle(cornerRadius: Self.cornerRadius)
+                    .strokeBorder(palette.promptBorder.opacity(0.6), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .glassEffect(
+                .regular.tint(palette.accent.opacity(0.06)),
+                in: .rect(cornerRadius: Self.cornerRadius)
+            )
     }
+
+    /// The corner radius of the composer's container.
+    private static let cornerRadius: CGFloat = 20
 }
 
 /// What a sub-agent tab shows after the transcript while the agent works.

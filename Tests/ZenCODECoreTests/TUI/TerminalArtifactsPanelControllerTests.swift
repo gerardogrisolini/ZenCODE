@@ -281,9 +281,11 @@ struct TerminalArtifactsPanelControllerTests {
         frame.dropFirst().dropLast().map(content)
     }
 
-    /// The body rows of a frame drawn with a header of `headerCount` rows.
+    /// The body rows of a frame drawn with a header of `headerCount` rows:
+    /// those between the top border and the `├─┤` separator, the header
+    /// sitting at the bottom, above the bottom border.
     private func diffContents(_ frame: [String], headerCount: Int = 2) -> [String] {
-        frame.dropFirst(1 + headerCount + 1).dropLast().map(content)
+        frame.dropFirst().dropLast(1 + headerCount + 1).map(content)
     }
 
     private func trimmed(_ row: String) -> String {

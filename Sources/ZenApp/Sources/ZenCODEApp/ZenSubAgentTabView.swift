@@ -2,10 +2,11 @@
 //  ZenSubAgentTabView.swift
 //  ZenApp
 //
-//  The content of a sub-agent tab, read-only: the detail card of the agent,
-//  the notice of a transcript not available, the last transcript read with
-//  the rows of the conversation, and the live activity while the agent
-//  works, following the bottom as the conversation does.
+//  The content of a sub-agent tab, read-only: the notice of a transcript not
+//  available, the last transcript read with the rows of the conversation, and
+//  the live activity while the agent works, following the bottom as the
+//  conversation does, over the detail card of the agent, fixed at the bottom
+//  where the conversation has the composer.
 //
 
 import Foundation
@@ -53,6 +54,11 @@ extension View {
 /// (``ZenSubAgentTranscriptModel/toolDurations``): its rows are rebuilt from
 /// the agent's history, whose results carry no time, so a call that ran
 /// before the tab opened has its time too.
+///
+/// The detail card of the agent is not part of the scroll: it is the dock of
+/// the tab (`ZenSubAgentDetailDock`), in the bottom safe area where the
+/// conversation has its composer, so it stays still while the rows scroll
+/// under it and the jump-to-latest button stays above it.
 struct ZenSubAgentTabView: View {
     let model: ZenSubAgentTranscriptModel
 
@@ -69,17 +75,13 @@ struct ZenSubAgentTabView: View {
         let showsJumpToLatest = !isFollowing && isFarFromBottom
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                ZenSubAgentDetailSlot(model: model)
                 ZenSubAgentTranscriptNotice(model: model)
                 ZenTranscriptRowList(rows: rows, durations: durations)
                 ZenSubAgentLiveSlot(model: model)
             }
             .padding(.horizontal, ZenConversationScreen.contentInset)
             .padding(.top, 16)
-            // Nothing sits below the tab (no composer, no status bar): the
-            // margin keeps the last row clear of the window's edge and of
-            // its soft scroll-edge effect.
-            .padding(.bottom, 24)
+            .padding(.bottom, 12)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -100,6 +102,11 @@ struct ZenSubAgentTabView: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: showsJumpToLatest)
+        // Outside the overlay of the button, so it stays above the dock, as
+        // above the composer of the conversation.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ZenSubAgentDetailDock(model: model)
+        }
     }
 
     /// Follows the bottom without animation, so a tab that is not shown only
@@ -123,13 +130,17 @@ struct ZenSubAgentTabView: View {
     }
 }
 
-/// The detail card of the agent, once the tab has its snapshot.
-private struct ZenSubAgentDetailSlot: View {
+/// The dock of the tab, once it has its snapshot: the detail card of the agent
+/// with the margins of the composer (``ZenBottomChrome``). It reads the
+/// snapshot, so the tab's body does not run for it.
+private struct ZenSubAgentDetailDock: View {
     let model: ZenSubAgentTranscriptModel
 
     var body: some View {
         if let snapshot = model.snapshot {
             ZenSubAgentDetailCard(snapshot: snapshot)
+                .padding([.bottom, .horizontal], ZenConversationScreen.contentInset)
+                .padding(.top, 6)
         }
     }
 }
