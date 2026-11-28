@@ -10,6 +10,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- macOS app: File > New Session with Worktree asks for a name, then creates or
+  reuses the worktree and opens a new session in its workspace without changing
+  existing sessions. Closing the last session or window using a menu worktree
+  offers Keep, Merge, or Remove without closing other workspaces.
+
 ### Changed
 
 - `Scripts/test-all.sh` runs the root, ZenCRON, ZenApp (macOS), and supported

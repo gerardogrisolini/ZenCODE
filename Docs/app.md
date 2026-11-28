@@ -147,15 +147,28 @@ repository of the current folder (or of `--working-directory`). `zen` creates or
 reuses the worktree, with the branch `NAME` and in the support directory, as the
 terminal does (see [Git Worktrees](zen.md#git-worktrees)), then starts the app
 with `--worktree NAME` and `--working-directory <worktree>`, so the line
-`Started the ZenCODE app in <workspace>.` shows the worktree path. The app does
-not create worktrees: it expects `--working-directory` to be the worktree, as
-`zen --ui` passes it. The project memory, saved sessions, task graphs, and
-project agents are those of the repository. The sessions that work in the
-worktree get the `Git worktree:` section of the system prompt; a window opened
-on another folder does not.
+`Started the ZenCODE app in <workspace>.` shows the worktree path.
 
-When the last workspace window closes, or on a quit (⌘Q), the app opens a
-**Worktree** window instead of quitting, with the worktree name and path:
+**File > New Session with Worktree** asks for a worktree name and creates or
+reuses it in the repository of the current window. After a valid confirmation,
+the new session opens in a window for that worktree's directory; if that window
+is already open, the session is added to it. Existing sessions remain in their
+own directories. Cancel or a blank name opens nothing, and preparation errors
+are shown in the prompt. When the last session using that worktree closes
+(including with the sidebar **×**), or its window closes with no other session
+using the worktree, the app opens **Worktree** after those sessions stop. Other
+workspaces stay open. Reopen the worktree after completing the decision; closing
+the dialog without choosing keeps it. Quitting directly without a pending
+decision does not merge or remove menu worktrees.
+
+The project memory, saved sessions, task graphs, and project agents are those of
+the repository. With a `--worktree` launch, sessions that work in the worktree
+specified at launch get the `Git worktree:` section of the system prompt.
+
+After a `--worktree` launch, when the last workspace window closes or on a
+quit (⌘Q), the app opens **Worktree** instead of quitting. A worktree already
+managed by the launch uses this flow even if the menu reuses it. Both flows
+show the worktree name and path and offer:
 
 - **Keep worktree** (the default) leaves the worktree and its branch; resume it
   with `zen --worktree NAME`.
@@ -165,13 +178,15 @@ When the last workspace window closes, or on a quit (⌘Q), the app opens a
 - **Remove without merging** asks for confirmation, then removes the worktree
   and deletes its branch; its changes are lost.
 
-Closing the Worktree window without choosing keeps the worktree. The sessions
-shut down first, then the chosen action runs, and the app quits once it
-succeeds. If the repository cannot be read, only **Keep worktree** is available.
-If the action fails (for example a merge conflict, which is aborted and leaves
-the worktree in place), the window shows Git's message, as the terminal prints
-it, and a **Quit ZenCODE** button. The Worktree window is not restored at the
-next launch and is not listed in the Window menu.
+Closing the Worktree window without choosing keeps the worktree. Merge and
+remove only run after sessions using the worktree have stopped. If Git cannot
+inspect the repository, only **Keep worktree** is available. In the menu flow,
+the dialog shows the result or Git's error and **Done** closes just the dialog;
+if no windows remain, the app quits normally. In the launch flow, all sessions
+shut down first, and success quits the app. An error (for example a merge
+conflict, which is aborted and leaves the worktree in place) shows Git's message
+and a **Quit ZenCODE** button. The Worktree window is not restored at the next
+launch and is not listed in the Window menu.
 
 ## Conversation
 

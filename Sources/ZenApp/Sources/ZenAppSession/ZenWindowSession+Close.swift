@@ -19,6 +19,7 @@ extension ZenWindowSession {
     /// the window's tasks are cancelled and the runtime forgets the window.
     public func close() async {
         guard !isClosed else { return }
+        runtime?.windowDidStartClosing()
         let detach = closeAtOnce()
         await ZenWindowSteps.close(sessionHost, slotID: slotID)
         cancelWork()

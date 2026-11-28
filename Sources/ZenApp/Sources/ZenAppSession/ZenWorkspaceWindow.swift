@@ -46,6 +46,10 @@ public final class ZenWorkspaceWindow {
     /// The last session of the window closed (`/exit`, ``closeSession(_:)``):
     /// the shell closes the window. ``close()`` does not set it.
     public private(set) var closeRequested = false
+    /// The File menu requests the worktree name in this window.
+    public var isWorktreePromptPresented = false
+    /// A newly opened session to focus as soon as its native window attaches.
+    @ObservationIgnored public weak var pendingWorktreeFocus: ZenWindowSession?
 
     /// Runs when a session joins the window, before it is selected: the
     /// shell gives it the focus action of the system window
@@ -59,6 +63,10 @@ public final class ZenWorkspaceWindow {
     @ObservationIgnored private let runtime: ZenAppRuntime
     /// ``openFirstSession()`` ran.
     @ObservationIgnored private var didOpenFirstSession = false
+    var isAwaitingFirstSession: Bool { !didOpenFirstSession && !isClosingWindow }
+    /// The shell has observed the native window close; don't reuse it while
+    /// the asynchronous teardown starts.
+    @ObservationIgnored public private(set) var isClosingWindow = false
     /// ``close()`` ran.
     @ObservationIgnored public private(set) var isClosed = false
     /// The sessions still opening.
@@ -78,13 +86,13 @@ public final class ZenWorkspaceWindow {
     /// selects it; a failure is kept in ``openFailure``. Only the first call
     /// does anything.
     public func openFirstSession() async {
-        guard !didOpenFirstSession, !isClosed else { return }
+        guard !didOpenFirstSession, !isClosingWindow, !isClosed else { return }
         didOpenFirstSession = true
         beginOpening()
         defer { endOpening() }
         do {
             let session = try await runtime.openWindow(workspace: workspace)
-            guard !isClosed else {
+            guard !isClosed, !isClosingWindow else {
                 await session.close()
                 return
             }
@@ -107,12 +115,12 @@ public final class ZenWorkspaceWindow {
     ///   window closed meanwhile (the session is closed then).
     @discardableResult
     public func openNewSession() async -> ZenWindowSession? {
-        guard !isClosed else { return nil }
+        guard !isClosed, !isClosingWindow, !closeRequested else { return nil }
         beginOpening()
         defer { endOpening() }
         do {
             let session = try await runtime.openWindow(workspace: workspace)
-            guard !isClosed else {
+            guard !isClosed, !isClosingWindow else {
                 await session.close()
                 return nil
             }
@@ -121,7 +129,11 @@ public final class ZenWorkspaceWindow {
         } catch {
             guard !isClosed else { return nil }
             let shown = selectedSession.flatMap { $0.isClosed ? nil : $0 } ?? sessions.last { !$0.isClosed }
-            shown?.appendLocalNow(.local(text: Self.newSessionFailureText(for: error), isFailure: true))
+            if let shown {
+                shown.appendLocalNow(.local(text: Self.newSessionFailureText(for: error), isFailure: true))
+            } else {
+                openFailure = Self.describe(error)
+            }
             return nil
         }
     }
@@ -162,9 +174,17 @@ public final class ZenWorkspaceWindow {
             setSelection(next)
         }
         await session.close()
-        if sessions.isEmpty, !isClosed, !closeRequested {
+        if sessions.isEmpty, openingCount > 0, !isClosed, !isClosingWindow {
+            await waitForOpenings()
+        }
+        if sessions.isEmpty, !isClosed, !isClosingWindow, !closeRequested {
             closeRequested = true
         }
+    }
+
+    package func beginSystemWindowClose() {
+        isClosingWindow = true
+        isWorktreePromptPresented = false
     }
 
     /// The system window closes: closes every session of the window, also
@@ -187,11 +207,13 @@ public final class ZenWorkspaceWindow {
             }
         }
         // A session still opening closes as soon as it opens.
-        if openingCount > 0 {
-            await withCheckedContinuation { continuation in
-                openingsDidEnd.append(continuation)
-            }
-        }
+        if openingCount > 0 { await waitForOpenings() }
+        runtime.evaluateMenuWorktreeClosures()
+    }
+
+    private func waitForOpenings() async {
+        guard openingCount > 0 else { return }
+        await withCheckedContinuation { openingsDidEnd.append($0) }
     }
 
     // MARK: - Private

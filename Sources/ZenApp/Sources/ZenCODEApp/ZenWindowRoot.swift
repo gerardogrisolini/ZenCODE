@@ -46,12 +46,21 @@ struct ZenWindowRoot: View {
                 }
             }
             .onAppear {
+                let show = openWindow
+                runtime.showWorktreeClosure = { show(id: ZenWorktreeClosureWindow.id) }
                 lifetime.open(runtime: runtime, workspace: workspace)
                 lifetime.onWindowWillClose = Self.askWorktreeClosureIfLast(
                     lifetime: lifetime,
-                    runtime: runtime,
-                    openWindow: openWindow
+                    runtime: runtime
                 )
+            }
+            .sheet(isPresented: Binding(
+                get: { workspaceWindow?.isWorktreePromptPresented == true },
+                set: { workspaceWindow?.isWorktreePromptPresented = $0 }
+            )) {
+                if let workspaceWindow {
+                    ZenWorktreeSessionSheet(runtime: runtime, source: workspaceWindow)
+                }
             }
             .onChange(of: workspaceWindow?.closeRequested ?? false) { _, requested in
                 guard requested else { return }
@@ -79,15 +88,13 @@ struct ZenWindowRoot: View {
     /// down, so its own `.onChange` may never run.
     private static func askWorktreeClosureIfLast(
         lifetime: ZenWindowLifetime,
-        runtime: ZenAppRuntime,
-        openWindow: OpenWindowAction
+        runtime: ZenAppRuntime
     ) -> @MainActor () -> Void {
         // Weak: the lifetime keeps this closure.
         { [weak lifetime] in
             guard let closure = runtime.worktreeClosure, closure.isPending,
                   !runtime.hasOpenWindow(otherThan: lifetime?.workspaceWindow?.sessions ?? []) else { return }
-            closure.request()
-            openWindow(id: ZenWorktreeClosureWindow.id)
+            runtime.requestLaunchWorktreeClosure()
         }
     }
 

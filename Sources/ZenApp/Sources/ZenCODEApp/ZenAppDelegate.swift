@@ -42,7 +42,7 @@ final class ZenAppDelegate: NSObject, NSApplicationDelegate {
                 step: { launcher.terminationStep() },
                 shutdown: { await launcher.shutdown() },
                 reply: { NSApp.reply(toApplicationShouldTerminate: true) },
-                requestWorktreeClosure: { launcher.readyRuntime?.worktreeClosure?.request() }
+                requestWorktreeClosure: { launcher.readyRuntime?.requestLaunchWorktreeClosure() }
             )
         }
     }
@@ -72,11 +72,11 @@ final class ZenAppDelegate: NSObject, NSApplicationDelegate {
         launcher.start()
     }
 
-    /// The app quits with its last window, except while the worktree of a
-    /// `--worktree` launch waits for the operator's choice: the Worktree
-    /// window asks it, and the choice quits the app.
+    /// The app quits with its last window unless a worktree close is still
+    /// in progress, or the Worktree window is about to open.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        launcher.readyRuntime?.worktreeClosure?.isPending != true
+        guard let runtime = launcher.readyRuntime else { return true }
+        return !runtime.hasPendingMenuWorktreeClosure && runtime.worktreeClosure?.isPending != true
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

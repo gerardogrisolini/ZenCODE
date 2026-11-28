@@ -68,6 +68,11 @@ struct ZenMenuCommands: Commands {
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(workspaceWindow?.isClosed != false)
 
+            Button("New Session with Worktree") {
+                workspaceWindow?.isWorktreePromptPresented = true
+            }
+            .disabled(workspaceWindow?.isClosed != false)
+
             Button("Close Session") {
                 session?.run(ZenAppCommands.exit.command)
             }
@@ -180,6 +185,10 @@ struct ZenMenuCommands: Commands {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let workspace = url.standardizedFileURL
         if let runtime = launcher.readyRuntime {
+            guard runtime.canOpenWorkspace(workspace) else {
+                openWindow(id: ZenWorktreeClosureWindow.id)
+                return
+            }
             for window in runtime.openWindows(in: workspace) {
                 if runtime.focusWindow(window) { return }
             }

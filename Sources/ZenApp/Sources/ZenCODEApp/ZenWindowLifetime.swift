@@ -64,6 +64,7 @@ final class ZenWindowLifetime {
         self.runtime = runtime
         let workspaceWindow = ZenWorkspaceWindow(runtime: runtime, workspace: workspace)
         self.workspaceWindow = workspaceWindow
+        runtime.registerWorkspaceWindow(workspaceWindow)
         workspaceWindow.sessionDidJoin = { [weak self] session in
             self?.installFocusAction(of: session)
         }
@@ -88,6 +89,10 @@ final class ZenWindowLifetime {
         self.window = window
         for session in workspaceWindow?.sessions ?? [] {
             installFocusAction(of: session)
+        }
+        if let pending = workspaceWindow?.pendingWorktreeFocus {
+            workspaceWindow?.pendingWorktreeFocus = nil
+            runtime?.focusWindow(pending)
         }
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
@@ -126,6 +131,7 @@ final class ZenWindowLifetime {
     func windowWillClose() {
         guard !isWindowClosed else { return }
         isWindowClosed = true
+        workspaceWindow?.beginSystemWindowClose()
         onWindowWillClose?()
         stopObserving()
         closeSessions()

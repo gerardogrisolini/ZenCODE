@@ -11,15 +11,9 @@ import Foundation
 import Observation
 import ZenCODECore
 
-/// How the worktree of a `--worktree` launch is closed before the app quits.
-///
-/// The app asks once, in its Worktree window, when the last workspace window
-/// closes or the operator quits (``request()``). ``load()`` reads the
-/// repository for that window (`AgentWorktreeManager.inspect`): the main
-/// branch and whether the worktree has uncommitted changes. ``decide(_:)``
-/// shuts the runtime down first, so no session writes in the worktree any
-/// more, then closes the worktree (`AgentWorktreeManager.perform`) and keeps
-/// the outcome.
+/// A worktree decision shared by the launch and workspace close flows.
+/// The launch decision shuts down the app before Git runs. A local decision
+/// is requested only after the workspace's sessions have drained.
 ///
 /// Keeping the worktree reads neither Git nor the inspection, so it works
 /// also when the repository could not be inspected; merging and removing need
@@ -59,9 +53,9 @@ public final class ZenWorktreeClosure {
     /// Where the closing is.
     public private(set) var phase: Phase = .choosing
 
-    /// The operator has not chosen yet.
+    /// The operator can still choose an action.
     public var isPending: Bool {
-        if case .choosing = phase { true } else { false }
+        if case .choosing = phase { !isDismissed } else { false }
     }
 
     /// The chosen action runs.
@@ -69,6 +63,11 @@ public final class ZenWorktreeClosure {
         if case .running = phase { true } else { false }
     }
 
+    /// Whether Git can take exclusive access now. Keep never modifies Git.
+    public var canModifyWorktree: Bool { canModify() }
+
+    private var isDismissed = false
+    @ObservationIgnored private let canModify: @MainActor () -> Bool
     @ObservationIgnored private let shutdown: @MainActor () async -> Void
     @ObservationIgnored private let inspect: Inspect
     @ObservationIgnored private let perform: Perform
@@ -84,6 +83,7 @@ public final class ZenWorktreeClosure {
     public init(
         worktree: AgentWorktree,
         shutdown: @escaping @MainActor () async -> Void,
+        canModify: @escaping @MainActor () -> Bool = { true },
         inspect: @escaping Inspect = { try await AgentWorktreeManager.inspect($0) },
         perform: @escaping Perform = { action, worktree, inspection in
             await AgentWorktreeManager.perform(action, worktree: worktree, inspection: inspection)
@@ -91,6 +91,7 @@ public final class ZenWorktreeClosure {
     ) {
         self.worktree = worktree
         self.shutdown = shutdown
+        self.canModify = canModify
         self.inspect = inspect
         self.perform = perform
     }
@@ -100,6 +101,13 @@ public final class ZenWorktreeClosure {
     public func request() {
         guard !isRequested else { return }
         isRequested = true
+    }
+
+    /// Keeps the worktree when a local dialog closes without a choice.
+    /// An action already queued by that view must no longer start.
+    func dismissWithoutDecision() {
+        guard isPending else { return }
+        isDismissed = true
     }
 
     /// Reads the repository into ``inspection``; a failure leaves it `nil`
@@ -122,7 +130,7 @@ public final class ZenWorktreeClosure {
     /// Ignored once a decision was taken, and for merging and removing
     /// without an ``inspection``; keeping needs none.
     public func decide(_ action: AgentWorktreeManager.ClosingAction) async {
-        guard isPending else { return }
+        guard isPending, action == .keep || canModifyWorktree else { return }
         let inspection: AgentWorktreeManager.Inspection
         if let loaded = self.inspection {
             inspection = loaded

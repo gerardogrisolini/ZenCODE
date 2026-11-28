@@ -12,6 +12,15 @@ import Observation
 import ToolCore
 import ZenCODECore
 
+@MainActor
+private final class WeakWorkspaceWindow {
+    weak var value: ZenWorkspaceWindow?
+
+    init(_ value: ZenWorkspaceWindow) {
+        self.value = value
+    }
+}
+
 /// The app's runtime, one per process: the `ChatSessionHost` over the host's
 /// runner, one consent authorizer for every session (the host routes each
 /// request to the slot that runs it), and the shell of the host.
@@ -85,6 +94,19 @@ public final class ZenAppRuntime {
     @ObservationIgnored let runner: AgentCoreSessionRunner
     /// The open windows, in the order they opened.
     private(set) var windows: [ZenWindowSession] = []
+    /// Workspace windows register before their first session starts opening.
+    @ObservationIgnored private var workspaceWindows: [WeakWorkspaceWindow] = []
+    /// Requests made after opening a window but before its view is installed.
+    @ObservationIgnored private var pendingWorktreeWindows: [String: Int] = [:]
+    @ObservationIgnored private var workspaceOpenings: [String: Int] = [:]
+    @ObservationIgnored private var sessionsClosing = 0
+    @ObservationIgnored private var worktreeOperationsDidEnd: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var menuWorktrees: [String: AgentWorktree] = [:]
+    private var usedMenuWorktrees: Set<String> = []
+    private var menuWorktreeClosures: [ZenWorktreeClosure] = []
+    private var worktreePreparations = 0
+    /// The shell installs the action once a workspace scene is available.
+    @ObservationIgnored package var showWorktreeClosure: (@MainActor () -> Void)?
     @ObservationIgnored private var shellObservation: Task<Void, Never>?
     /// The latest toggle of the access mode, or alignment of a window that
     /// opened; each one waits for the one before it, so they reach the
@@ -248,15 +270,93 @@ public final class ZenAppRuntime {
     /// for one), never from the selection of another session.
     public func openWindow(workspace: URL) async throws -> ZenWindowSession {
         guard !isShutDown else { throw ChatSessionHostError.shutDown }
+        let path = Self.workspacePath(workspace)
+        guard canOpenWorkspace(at: path) else { throw MenuWorktreeError.closing }
+        workspaceOpenings[path, default: 0] += 1
+        defer {
+            if workspaceOpenings[path] == 1 {
+                workspaceOpenings.removeValue(forKey: path)
+            } else {
+                workspaceOpenings[path, default: 0] -= 1
+            }
+            worktreeOperationDidEnd()
+            evaluateMenuWorktreeClosures()
+        }
         let window = try await ZenWindowSession.open(runtime: self, workspace: workspace)
         guard !isShutDown else {
             await window.close()
             throw ChatSessionHostError.shutDown
         }
         windows.append(window)
+        usedMenuWorktrees.formUnion(menuWorktrees.keys.filter { Self.isInside(path, directory: $0) })
         // A toggle that finished while the window was opening, or still runs.
         alignLocalExecAccessMode(of: window)
         return window
+    }
+
+    /// Registers a native workspace window before its first session opens.
+    /// Further requests queued while its view was being created become new sessions.
+    public func registerWorkspaceWindow(_ window: ZenWorkspaceWindow) {
+        workspaceWindows.removeAll { $0.value == nil || $0.value?.isClosed == true }
+        guard !workspaceWindows.contains(where: { $0.value === window }) else { return }
+        workspaceWindows.append(WeakWorkspaceWindow(window))
+        let path = Self.workspacePath(window.workspace)
+        let additional = max(0, (pendingWorktreeWindows.removeValue(forKey: path) ?? 0) - 1)
+        if additional > 0 {
+            Task { @MainActor in
+                for _ in 0..<additional {
+                    guard !window.isClosed, !window.isClosingWindow, !self.isShutDown else { return }
+                    if let session = await window.openNewSession(), !self.focusWindow(session) {
+                        window.pendingWorktreeFocus = session
+                    }
+                }
+            }
+        }
+    }
+
+    /// Opens a prepared menu worktree and retains the name and directory for
+    /// its eventual close. The launch worktree already has its own decision.
+    @discardableResult
+    public func openWorktreeSession(
+        _ worktree: AgentWorktree,
+        openWindow: @MainActor (URL) -> Void
+    ) async -> Bool {
+        let path = Self.workspacePath(worktree.directory)
+        guard !isShutDown, canOpenWorkspace(at: path) else { return false }
+        if worktreeClosure.map({ Self.workspacePath($0.worktree.directory) }) != path {
+            menuWorktrees[path] = worktree
+            if windows.contains(where: { Self.isInside(Self.workspacePath($0.workspace), directory: path) }) {
+                usedMenuWorktrees.insert(path)
+            }
+        }
+        await openWorktreeSession(in: worktree.directory, openWindow: openWindow)
+        return true
+    }
+
+    /// Opens a new worktree session in an existing workspace window, or asks
+    /// the shell to open one. Requests made before that window registers are
+    /// queued rather than lost when SwiftUI reuses the same window value.
+    public func openWorktreeSession(
+        in workspace: URL,
+        openWindow: @MainActor (URL) -> Void
+    ) async {
+        guard !isShutDown, canOpenWorkspace(workspace) else { return }
+        let workspace = workspace.standardizedFileURL
+        let path = Self.workspacePath(workspace)
+        workspaceWindows.removeAll { $0.value == nil || $0.value?.isClosed == true }
+        if let window = workspaceWindows.compactMap(\.value).first(where: {
+            Self.workspacePath($0.workspace) == path && !$0.isClosingWindow && !$0.closeRequested
+        }) {
+            if let session = await window.openNewSession() {
+                if !focusWindow(session) { window.pendingWorktreeFocus = session }
+            } else if let session = window.selectedSession {
+                if !focusWindow(session) { window.pendingWorktreeFocus = session }
+            }
+            return
+        }
+        let count = pendingWorktreeWindows[path, default: 0]
+        pendingWorktreeWindows[path] = count + 1
+        if count == 0 { openWindow(workspace) }
     }
 
     /// The live windows of `workspace`, in the order they opened.
@@ -292,13 +392,138 @@ public final class ZenAppRuntime {
         }
     }
 
+    func windowDidStartClosing() {
+        sessionsClosing += 1
+    }
+
     /// Forgets `window`. When voice mode followed it, it moves to the most
     /// recent active window left, or to none.
     func windowDidClose(_ window: ZenWindowSession) {
+        sessionsClosing -= 1
         windows.removeAll { $0 === window }
         voiceActivations.removeAll { $0 == window.id }
         let fallback = voiceActivations.last.flatMap { id in windows.first { $0.id == id } }
         voice.sink.post(.windowClosed(window.voiceHost, fallback: fallback?.voiceHost))
+        worktreeOperationDidEnd()
+        evaluateMenuWorktreeClosures()
+    }
+
+    // MARK: - Menu worktree closure
+
+    /// Hold automatic quit even during the gap between a native window close
+    /// and its last slot finishing teardown, before the dialog can open.
+    package var hasPendingMenuWorktreeClosure: Bool {
+        !usedMenuWorktrees.isEmpty || !menuWorktreeClosures.isEmpty
+    }
+
+    package var displayedWorktreeClosure: ZenWorktreeClosure? {
+        if let worktreeClosure, worktreeClosure.isRequested, worktreeClosure.isRunning || isShutDown {
+            return worktreeClosure
+        }
+        return menuWorktreeClosures.first ?? worktreeClosure.flatMap { $0.isRequested ? $0 : nil }
+    }
+
+    package var hasMenuWorktreeDialog: Bool { !isShutDown && !menuWorktreeClosures.isEmpty }
+
+    package func requestLaunchWorktreeClosure() {
+        guard let worktreeClosure, worktreeClosure.isPending else { return }
+        worktreeClosure.request()
+        showWorktreeClosure?()
+    }
+
+    /// A native close without a choice is Keep: discard the decision without
+    /// running Git, but keep tracking the worktree if it is used again.
+    package func dismissMenuWorktreeClosure(_ closure: ZenWorktreeClosure) {
+        guard !closure.isRunning, menuWorktreeClosures.first === closure else { return }
+        closure.dismissWithoutDecision()
+        menuWorktreeClosures.removeFirst()
+        // Only reopen after the native window has finished closing.
+        Task { [weak self] in
+            guard let self, self.displayedWorktreeClosure != nil else { return }
+            self.showWorktreeClosure?()
+        }
+    }
+
+    package func beginWorktreePreparation() -> Bool {
+        guard !isShutDown, worktreeClosure?.isRunning != true,
+              !menuWorktreeClosures.contains(where: \.isRunning) else { return false }
+        worktreePreparations += 1
+        return true
+    }
+
+    package func endWorktreePreparation() {
+        worktreePreparations -= 1
+        worktreeOperationDidEnd()
+    }
+
+    private func worktreeOperationDidEnd() {
+        guard worktreePreparations == 0, workspaceOpenings.isEmpty, sessionsClosing == 0 else { return }
+        let waiting = worktreeOperationsDidEnd
+        worktreeOperationsDidEnd.removeAll()
+        for continuation in waiting { continuation.resume() }
+    }
+
+    package func canOpenWorkspace(_ workspace: URL) -> Bool {
+        canOpenWorkspace(at: Self.workspacePath(workspace))
+    }
+
+    private func canOpenWorkspace(at path: String) -> Bool {
+        !menuWorktreeClosures.contains {
+            ($0.isPending || $0.isRunning) && Self.isInside(path, directory: Self.workspacePath($0.worktree.directory))
+        }
+    }
+
+    /// Called at completion of session opening or teardown. Closing sessions
+    /// stay in `windows` until their host slot and observer have stopped.
+    func evaluateMenuWorktreeClosures() {
+        guard !isShutDown, worktreeClosure?.isRunning != true else { return }
+        let wasEmpty = menuWorktreeClosures.isEmpty
+        for path in usedMenuWorktrees.sorted() {
+            guard let worktree = menuWorktrees[path], !usesMenuWorktree(at: path) else { continue }
+            usedMenuWorktrees.remove(path)
+            let closure = ZenWorktreeClosure(
+                worktree: worktree,
+                shutdown: {},
+                canModify: { [weak self] in
+                    guard let self, !self.isShutDown, self.worktreePreparations == 0,
+                          self.worktreeClosure?.isRunning != true else { return false }
+                    return !self.usesMenuWorktree(at: path)
+                }
+            )
+            closure.request()
+            menuWorktreeClosures.append(closure)
+        }
+        if wasEmpty, !menuWorktreeClosures.isEmpty { showWorktreeClosure?() }
+    }
+
+    private func usesMenuWorktree(at path: String) -> Bool {
+        windows.contains { Self.isInside(Self.workspacePath($0.workspace), directory: path) }
+            || workspaceOpenings.keys.contains { Self.isInside($0, directory: path) }
+            || pendingWorktreeWindows.keys.contains { Self.isInside($0, directory: path) }
+            || workspaceWindows.contains {
+                guard let window = $0.value, !window.isClosed, window.isAwaitingFirstSession else { return false }
+                return Self.isInside(Self.workspacePath(window.workspace), directory: path)
+            }
+    }
+
+    private static func workspacePath(_ workspace: URL) -> String {
+        workspace.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private static func isInside(_ workspace: String, directory: String) -> Bool {
+        // Treat case-only differences as in use even on case-sensitive
+        // volumes: a false positive is safer than removing an open checkout.
+        let prefix = directory.hasSuffix("/") ? directory : directory + "/"
+        return workspace.caseInsensitiveCompare(directory) == .orderedSame
+            || workspace.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil
+    }
+
+    package enum MenuWorktreeError: LocalizedError {
+        case closing
+
+        package var errorDescription: String? {
+            "Finish the open Worktree dialog before opening this workspace."
+        }
     }
 
     // MARK: - Voice mode
@@ -459,5 +684,8 @@ public final class ZenAppRuntime {
         // The shell stream ends with the host, after its last snapshot.
         await shellObservation?.value
         shellObservation = nil
+        if worktreePreparations != 0 || !workspaceOpenings.isEmpty || sessionsClosing != 0 {
+            await withCheckedContinuation { worktreeOperationsDidEnd.append($0) }
+        }
     }
 }

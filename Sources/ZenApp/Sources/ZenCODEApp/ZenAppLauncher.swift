@@ -192,7 +192,8 @@ final class ZenAppLauncher {
 
     /// Decides how a quit request proceeds.
     func terminationStep() -> TerminationStep {
-        Self.terminationStep(
+        if readyRuntime?.hasMenuWorktreeDialog == true { return .alreadyShuttingDown }
+        return Self.terminationStep(
             isShuttingDown: shutdownTask != nil,
             launch: launchState,
             worktreeClosure: worktreeClosureState

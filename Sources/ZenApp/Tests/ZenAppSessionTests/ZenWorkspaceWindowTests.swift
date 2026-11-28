@@ -180,6 +180,161 @@ extension ZenWindowSessionTests {
         }
     }
 
+    @Test("A worktree request adds a session to its registered window without touching the source")
+    func worktreeRequestReusesWorkspaceWindow() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let source = ZenWorkspaceWindow(runtime: runtime, workspace: workspace)
+            let destination = ZenWorkspaceWindow(runtime: runtime, workspace: workspace.appendingPathComponent("worktree"))
+            runtime.registerWorkspaceWindow(source)
+            runtime.registerWorkspaceWindow(destination)
+            await source.openFirstSession()
+            await destination.openFirstSession()
+            let sourceSession = try #require(source.selectedSession)
+            let first = try #require(destination.selectedSession)
+            var openedWindow = false
+            await runtime.openWorktreeSession(in: destination.workspace) { _ in openedWindow = true }
+            #expect(!openedWindow)
+            #expect(source.sessions.count == 1)
+            #expect(source.selectedSession === sourceSession)
+            #expect(destination.sessions.count == 2)
+            #expect(destination.selectedSession !== first)
+            #expect(destination.selectedSession?.workspace == destination.workspace)
+            await source.close()
+            await destination.close()
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("Closing the last session of a menu worktree asks without closing another workspace")
+    func lastMenuWorktreeSessionShowsLocalClosure() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let worktree = try Self.menuWorktree(in: workspace)
+            let source = ZenWorkspaceWindow(runtime: runtime, workspace: workspace)
+            let destination = ZenWorkspaceWindow(runtime: runtime, workspace: worktree.directory)
+            runtime.registerWorkspaceWindow(destination)
+            await source.openFirstSession()
+            await destination.openFirstSession()
+            let other = try #require(source.selectedSession)
+            let first = try #require(destination.selectedSession)
+            #expect(await runtime.openWorktreeSession(worktree) { _ in Issue.record("Opened a duplicate workspace window") })
+            let last = try #require(destination.selectedSession)
+            #expect(last !== first)
+
+            var presentations = 0
+            runtime.showWorktreeClosure = { presentations += 1 }
+            await destination.closeSession(first)
+            #expect(runtime.displayedWorktreeClosure == nil)
+            #expect(!destination.closeRequested)
+            #expect(presentations == 0)
+
+            await destination.closeSession(last)
+            #expect(destination.closeRequested)
+            let closure = try #require(runtime.displayedWorktreeClosure)
+            #expect(closure.worktree == worktree)
+            #expect(presentations == 1)
+            await closure.decide(.keep) // Keep performs no Git operations.
+            runtime.dismissMenuWorktreeClosure(closure)
+            #expect(runtime.displayedWorktreeClosure == nil)
+            #expect(!runtime.hasPendingMenuWorktreeClosure)
+            #expect(!runtime.isShutDown)
+            #expect(!other.isClosed)
+            #expect(source.selectedSession === other)
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("Native window close waits for other sessions in the same worktree, including nested workspaces")
+    func nativeCloseWithAnotherMenuWorktreeWorkspace() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let worktree = try Self.menuWorktree(in: workspace)
+            let nested = worktree.directory.appendingPathComponent("nested", isDirectory: true)
+            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+            let destination = ZenWorkspaceWindow(runtime: runtime, workspace: worktree.directory)
+            let other = ZenWorkspaceWindow(runtime: runtime, workspace: nested)
+            #expect(await runtime.openWorktreeSession(worktree) { _ in })
+            runtime.registerWorkspaceWindow(destination)
+            await destination.openFirstSession()
+            await other.openFirstSession()
+            _ = try #require(other.selectedSession)
+
+            destination.beginSystemWindowClose()
+            #expect(runtime.hasPendingMenuWorktreeClosure)
+            await destination.close()
+            #expect(runtime.displayedWorktreeClosure == nil)
+            other.beginSystemWindowClose()
+            #expect(runtime.hasPendingMenuWorktreeClosure)
+            await other.close()
+            let closure = try #require(runtime.displayedWorktreeClosure)
+            #expect(closure.worktree == worktree)
+            runtime.dismissMenuWorktreeClosure(closure)
+            #expect(!runtime.hasPendingMenuWorktreeClosure)
+            #expect(!runtime.isShutDown)
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("A worktree close reserves its workspace and waits for in-flight Git preparation")
+    func reopeningMenuWorktreeWhileClosureIsPending() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let worktree = try Self.menuWorktree(in: workspace)
+            let destination = ZenWorkspaceWindow(runtime: runtime, workspace: worktree.directory)
+            #expect(await runtime.openWorktreeSession(worktree) { _ in })
+            runtime.registerWorkspaceWindow(destination)
+            await destination.openFirstSession()
+            _ = try #require(destination.selectedSession)
+            let started = runtime.beginWorktreePreparation()
+            try #require(started)
+            await destination.close()
+            guard let closure = runtime.displayedWorktreeClosure else {
+                runtime.endWorktreePreparation()
+                Issue.record("Expected a local worktree decision")
+                await runtime.shutdown()
+                return
+            }
+            #expect(!closure.canModifyWorktree)
+            #expect(!runtime.canOpenWorkspace(worktree.directory))
+            let reopened = await runtime.openWorktreeSession(worktree) { _ in
+                Issue.record("Opened a window while the decision reserved its worktree")
+            }
+            #expect(!reopened)
+            runtime.endWorktreePreparation()
+            #expect(closure.canModifyWorktree)
+
+            runtime.dismissMenuWorktreeClosure(closure)
+            #expect(runtime.canOpenWorkspace(worktree.directory))
+            let session = try await runtime.openWindow(workspace: worktree.directory)
+            #expect(!session.isClosed)
+            await session.close()
+            #expect(runtime.displayedWorktreeClosure !== closure)
+            #expect(runtime.displayedWorktreeClosure?.worktree == worktree)
+            await runtime.shutdown()
+        }
+    }
+
+    private static func menuWorktree(in workspace: URL) throws -> AgentWorktree {
+        let directory = workspace.appendingPathComponent("temporary-worktree", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return AgentWorktree(name: "feature", directory: directory)
+    }
+
+    @Test("Worktree requests queued before window registration each create a session")
+    func worktreeRequestsWhileWindowOpens() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let target = workspace.appendingPathComponent("worktree")
+            var opened: [URL] = []
+            await runtime.openWorktreeSession(in: target) { opened.append($0) }
+            await runtime.openWorktreeSession(in: target) { opened.append($0) }
+            #expect(opened == [target.standardizedFileURL])
+            let destination = ZenWorkspaceWindow(runtime: runtime, workspace: target)
+            runtime.registerWorkspaceWindow(destination)
+            await destination.openFirstSession()
+            #expect(await eventually { destination.sessions.count == 2 })
+            #expect(destination.sessions.allSatisfy { $0.workspace == target })
+            await destination.close()
+            await runtime.shutdown()
+        }
+    }
+
     /// The selection the controller holds now; a window snapshot can lag a
     /// fresh session's tool keys.
     private static func selection(

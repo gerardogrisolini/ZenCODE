@@ -2,10 +2,8 @@
 //  ZenWorktreeClosureWindow.swift
 //  ZenApp
 //
-//  The Worktree window of a `--worktree` launch: before the app quits, it
-//  asks whether to merge the worktree into the main branch, keep it, or
-//  remove it without merging, shows the work while it runs, and quits once
-//  it is done.
+//  The Worktree window shares its choices and results between local closes
+//  and the end of a `--worktree` launch.
 //
 
 import AppKit
@@ -15,23 +13,41 @@ import ZenAppSession
 import ZenAppTheme
 import ZenCODECore
 
-/// The content of the Worktree window.
-///
-/// It shows the closing of the worktree only once the operator is asked
-/// (``ZenWorktreeClosure/isRequested``): when the last workspace window
-/// closes, or on a quit. Shown otherwise (no runtime, no worktree, not
-/// asked) it draws nothing and closes itself.
+/// Shows the active worktree decision, if any. One observer follows the
+/// native window, even if a local decision replaces its SwiftUI content.
 struct ZenWorktreeClosureWindow: View {
     /// The identifier of the window scene.
     static let id = "zen-worktree-closure"
 
     let launcher: ZenAppLauncher
+    @State private var closeObserver = ZenWindowCloseObserver()
 
     var body: some View {
-        if let closure = launcher.readyRuntime?.worktreeClosure, closure.isRequested {
-            ZenWorktreeClosureView(closure: closure)
-        } else {
-            ZenWorktreeClosureUnrequestedView()
+        Group {
+            if let runtime = launcher.readyRuntime, let closure = runtime.displayedWorktreeClosure {
+                ZenWorktreeClosureView(
+                    closure: closure,
+                    closeObserver: closeObserver,
+                    isLaunchClosure: closure === runtime.worktreeClosure
+                )
+                .id(ObjectIdentifier(closure))
+            } else {
+                ZenWorktreeClosureUnrequestedView()
+            }
+        }
+        .background {
+            ZenWindowAccessor { [closeObserver, launcher] window in
+                closeObserver.attach(to: window) {
+                    guard let runtime = launcher.readyRuntime, let closure = runtime.displayedWorktreeClosure else {
+                        return
+                    }
+                    if closure === runtime.worktreeClosure {
+                        ZenWorktreeClosureView.windowWillClose(closure: closure)
+                    } else {
+                        runtime.dismissMenuWorktreeClosure(closure)
+                    }
+                }
+            }
         }
     }
 }
@@ -49,20 +65,16 @@ private struct ZenWorktreeClosureUnrequestedView: View {
     }
 }
 
-/// Asks how to close the worktree, shows the work while it runs, then quits
-/// the app, or shows why the work failed.
-///
-/// Closing the window without a choice keeps the worktree, then quits; once
-/// the work ended, closing it quits. It cannot be closed while the work
-/// runs. The close is the one of the hosting NSWindow
-/// (``ZenWindowCloseObserver``), not the content disappearing, which SwiftUI
-/// also reports for a minimized window or a background tab.
+/// Shared choices, confirmation, progress, and results. Only a launch
+/// decision quits the entire app.
 struct ZenWorktreeClosureView: View {
     let closure: ZenWorktreeClosure
+    let closeObserver: ZenWindowCloseObserver
+    let isLaunchClosure: Bool
 
     @State private var isConfirmingRemoval = false
-    @State private var closeObserver = ZenWindowCloseObserver()
 
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.zenPalette) private var palette
 
     /// The branch the merge goes into, as the window names it before the
@@ -97,18 +109,11 @@ struct ZenWorktreeClosureView: View {
             .frame(width: 460)
             .navigationTitle("Worktree")
             .windowDismissBehavior(closure.isRunning ? .disabled : .automatic)
-            .background {
-                ZenWindowAccessor { [closeObserver, closure] window in
-                    closeObserver.attach(to: window) {
-                        Self.windowWillClose(closure: closure)
-                    }
-                }
-            }
             .task {
                 await closure.load()
             }
             .onChange(of: closure.phase) { _, phase in
-                if case let .finished(outcome) = phase, outcome.succeeded {
+                if isLaunchClosure, case let .finished(outcome) = phase, outcome.succeeded {
                     quit()
                 }
             }
@@ -168,6 +173,12 @@ struct ZenWorktreeClosureView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if !closure.canModifyWorktree {
+                Text("Wait for the current worktree operation to finish before merging or removing.")
+                    .font(.callout)
+                    .foregroundStyle(palette.textMuted)
+                    .multilineTextAlignment(.center)
+            }
             VStack(spacing: 10) {
                 Button {
                     decide(.keep)
@@ -185,7 +196,7 @@ struct ZenWorktreeClosureView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
-                .disabled(inspection == nil)
+                .disabled(inspection == nil || !closure.canModifyWorktree)
                 Button(role: .destructive) {
                     isConfirmingRemoval = true
                 } label: {
@@ -193,7 +204,7 @@ struct ZenWorktreeClosureView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
-                .disabled(inspection == nil)
+                .disabled(inspection == nil || !closure.canModifyWorktree)
             }
             .controlSize(.large)
         }
@@ -224,8 +235,8 @@ struct ZenWorktreeClosureView: View {
             }
             .frame(maxHeight: 240)
             .fixedSize(horizontal: false, vertical: true)
-            Button("Quit ZenCODE") {
-                quit()
+            Button(isLaunchClosure ? "Quit ZenCODE" : "Done") {
+                if isLaunchClosure { quit() } else { dismissWindow(id: ZenWorktreeClosureWindow.id) }
             }
             .buttonStyle(.glassProminent)
             .tint(palette.accent)
@@ -251,7 +262,7 @@ struct ZenWorktreeClosureView: View {
     /// The window closes: without a choice the worktree is kept, then the
     /// app quits; once the work ended, the app quits. This view is gone by
     /// then, so the task quits by itself.
-    private static func windowWillClose(closure: ZenWorktreeClosure) {
+    fileprivate static func windowWillClose(closure: ZenWorktreeClosure) {
         guard closure.isRequested else { return }
         switch closure.phase {
         case .choosing:
@@ -295,9 +306,10 @@ final class ZenWindowCloseObserver {
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
-        ) { [weak self] _ in
+        ) { _ in
+            // Keep the observer alive through SwiftUI tearing down the view.
             MainActor.assumeIsolated {
-                self?.windowWillClose()
+                self.windowWillClose()
             }
         }
     }

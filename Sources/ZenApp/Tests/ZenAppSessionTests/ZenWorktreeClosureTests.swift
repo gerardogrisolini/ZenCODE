@@ -11,8 +11,8 @@
 import Foundation
 import Testing
 import ToolCore
-import ZenAppSession
 import ZenCODECore
+@testable import ZenAppSession
 
 @Suite("Worktree closure")
 @MainActor
@@ -56,6 +56,7 @@ struct ZenWorktreeClosureTests {
         record: Record,
         inspecting inspected: Result<AgentWorktreeManager.Inspection, InspectFailure> = .success(inspection),
         shutdownGate gate: ZenGate? = nil,
+        canModify: @escaping @MainActor () -> Bool = { true },
         outcome: AgentWorktreeManager.ClosingOutcome = outcome
     ) -> ZenWorktreeClosure {
         let closure = ZenWorktreeClosure(
@@ -67,6 +68,7 @@ struct ZenWorktreeClosureTests {
                 }
                 await gate?.pass()
             },
+            canModify: canModify,
             inspect: { _ in
                 record.inspections += 1
                 return try inspected.get()
@@ -108,6 +110,33 @@ struct ZenWorktreeClosureTests {
         #expect(closure.phase == .finished(failed))
         #expect(!closure.isPending)
         #expect(!closure.isRunning)
+    }
+
+    @Test("Git decisions must recheck the worktree reservation even after inspection")
+    func destructiveDecisionRequiresExclusiveAccess() async {
+        let record = Record()
+        let closure = makeClosure(record: record, canModify: { false })
+        await closure.load()
+        #expect(closure.inspection != nil)
+        await closure.decide(.merge)
+        await closure.decide(.discard)
+        #expect(closure.phase == .choosing)
+        #expect(record.events.isEmpty)
+
+        await closure.decide(.keep)
+        #expect(record.performed.map(\.action) == [.keep])
+    }
+
+    @Test("Closing the dialog without a decision prevents an already queued action")
+    func dismissedClosureDoesNotPerformAnAction() async {
+        let record = Record()
+        let closure = makeClosure(record: record)
+        await closure.load()
+        #expect(closure.inspection != nil)
+        closure.dismissWithoutDecision()
+        #expect(!closure.isPending)
+        await closure.decide(.discard)
+        #expect(record.events.isEmpty)
     }
 
     @Test("the phase goes from choosing to running to finished, and only the first decision counts")
