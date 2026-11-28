@@ -77,10 +77,11 @@ macOS app offer the same menu, each in its own way:
   (SIGINT or SIGTERM) while the menu is open cancels it and stops the process as
   usual. See [Telegram Mode](#telegram-mode).
 - **`zen --acp`**: after each `session/new` reply, when incomplete graphs exist,
-  the client receives a `session/request_permission` request for a synthetic
-  tool call titled "Open tasks from previous sessions", with one option per
-  graph, **Delete all old tasks**, and **Start fresh**. Cancelling the request,
-  or a request that fails, counts as **Start fresh**. A `session/prompt` sent
+  a client that explicitly advertises `clientCapabilities.elicitation.form`
+  receives a session-scoped `elicitation/create` form with one option per graph,
+  **Delete all old tasks**, and **Start fresh**. Only an accepted listed choice
+  triggers an action; declining, cancelling, an invalid answer, or an error counts
+  as **Start fresh**. A client without form support receives no offer. A `session/prompt` sent
   meanwhile waits for the answer (a `session/cancel` meanwhile ends that prompt
   as `cancelled` without a turn), and `session/close` cancels the question. The
   notices of the result reach the editor as agent messages. Sessions opened with
@@ -2039,9 +2040,31 @@ zen --acp --working-directory /path/to/project
 stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions,
 and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and
 token environment variables still apply. After a `session/new` reply, the client
-may be asked through `session/request_permission` whether to resume the task
+may be asked through `elicitation/create` (when it advertises form support) whether to resume the task
 graphs that earlier sessions left incomplete (see [Recovering Incomplete Tasks at
 Startup](#recovering-incomplete-tasks-at-startup)).
+
+The conversation text follows the standard ACP v1 fields only, because clients
+read `_meta` for nothing. A `session/prompt` does not echo the prompt: the
+client already shows the message it sent, and a `user_message_chunk` is written
+only when `session/load` replays the history. Every `agent_message_chunk`,
+`agent_thought_chunk`, and replayed `user_message_chunk` carries the standard
+`messageId`: all chunks of one message share it, and a new id tells the client
+a new message started. The model's text is one message while it streams without
+interruption; the text that resumes after a tool call, a thought, a plan, or a
+new model round or turn is a new message, and a block of thought is a message of
+its own. The configuration summary a session opens with (`Agent: … · Model: … ·
+Thinking: …`), the answer of a command, the notices of the task-graph offer, and
+the file-change summary are each a message with an id of their own, never joined
+with the model's answer; their text is unchanged, trailing line breaks included,
+so a client that ignores `messageId` reads them as before.
+
+The session title (`session_info_update`) is born once, as in codex-acp: there
+is no placeholder (not the folder's name), the first prompt of the conversation
+gives it (its first line, at most 80 characters), and the prompts after it never
+change it. A restored session that already has a title announces it once, after
+the reply of `session/load` or `session/resume`: the name it was saved under
+(the one `session/list` shows) or, without one, the title its first prompt gives.
 
 A request the agent still owes an answer to when a `session/close` ends the
 session it acts on — `_zencode/session/set_model`, `session/set_config_option`,
@@ -2094,7 +2117,9 @@ agent.
   the saved session of that id in the project of `cwd`: the one ACP saved,
   else the most recently saved one. `session/load` replays it to the client
   before its reply (the prompts as `user_message_chunk`, the responses as
-  `agent_thought_chunk` and `agent_message_chunk`); `session/resume` does not
+  `agent_thought_chunk` and `agent_message_chunk`, each entry a message with a
+  deterministic `messageId` made of the session id and the position of the
+  entry, so replaying the same history again gives the same ids); `session/resume` does not
   replay it. In both cases the next prompt reaches the model with the earlier
   turns, and the next saves update the same saved session. The system prompt,
   the session context, the tools, and the MCP servers are composed again, not

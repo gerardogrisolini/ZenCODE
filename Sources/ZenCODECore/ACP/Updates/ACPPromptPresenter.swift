@@ -14,8 +14,8 @@ import ZenCODERuntime
 ///
 /// ACP relates a `tool_call_update` to the `tool_call` of the same id, so a
 /// completion for a call whose creation never reached the client (a call
-/// cancelled before it was shown, one of a sub-agent) writes the creation
-/// first. Only presentation state: nothing of it is persisted.
+/// cancelled before it was shown) writes the creation first. Only
+/// presentation state: nothing of it is persisted.
 struct ACPPresentedToolCalls: Sendable {
     private final class Storage: Sendable {
         let ids = Mutex<Set<String>>(Set())
@@ -50,10 +50,10 @@ struct ACPPromptPresenter: ChatSessionPresenter {
     let updatePipeline: ACPPromptUpdatePipeline?
     /// Starts the taskless sub-agent observer before a tool call is shown.
     let ensureTasklessObserver: @Sendable () async -> Void
-    /// Claims the delivery of one delegated tool notification (its tool call
-    /// id and phase) for this prompt: `true` once per prompt, and only while
-    /// the prompt holds its incarnation and presents its updates.
-    let claimDelegatedToolNotification: @Sendable (String) async -> Bool
+    /// Closes the row of a delegated tool call a permission request announced
+    /// (``ZenCODEACPBridge/completeDelegatedPermissionToolCall(_:sessionID:)``);
+    /// any other delegated call writes nothing.
+    let completeDelegatedToolCall: @Sendable (DirectSubAgentToolEvent) async -> Void
     /// The tool calls this turn already showed, by id.
     private let presentedToolCalls = ACPPresentedToolCalls()
 
@@ -71,6 +71,10 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         }
     }
 
+    /// The chunks of thought and of the model's text are written without a
+    /// `messageId`: the turn's update pipeline, which sees every update of the
+    /// turn in order, gives each the id of the message it belongs to (see
+    /// ``ACPPromptUpdatePipeline``).
     func presentThought(_ thought: String) async {
         await send(ZenCODEACPBridge.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought))
     }
@@ -111,12 +115,11 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         await send(ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall, workingDirectory: workspaceURL))
     }
 
-    /// The call's completion `tool_call_update`, its title ending with the
-    /// time the tool executor measured (``DirectAgentToolResult/elapsed``);
-    /// a result without it (a call cancelled before it was dispatched) gives
-    /// a title without time. A completion of a call the client never saw — the
-    /// turn was cancelled before its creation was written — is preceded by the
-    /// `tool_call` it refers to.
+    /// The call's completion `tool_call_update`: its final status and result
+    /// as `content`, with no `title` (the one of the `tool_call` stays). A
+    /// completion of a call the client never saw — the turn was cancelled
+    /// before its creation was written — is preceded by the `tool_call` it
+    /// refers to.
     func presentToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
@@ -142,49 +145,15 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         await finishThought()
     }
 
-    /// A delegated agent's tool call, as a `tool_call` when it starts and a
-    /// `tool_call_update` when it completes, titled with the agent's name and
-    /// sent once per call and phase while the prompt is current. A completion
-    /// title ends with the time the tool executor measured
-    /// (``DirectAgentToolResult/elapsed``), when the result has it, as the
-    /// completion payload already sets it
-    /// (``ZenCODEACPBridge/toolCallCompletionUpdate(for:result:workingDirectory:)``).
+    /// A delegated agent's tool call is not presented in the session: as in
+    /// `codex-acp` without a sub-agent contract, the client sees the agent as
+    /// one tool call (``ACPTaskPresentation``, ``ACPTasklessPresentation``),
+    /// not the calls the agent makes. The one exception is a call a permission
+    /// request announced to the client, whose completion closes its row
+    /// (``completeDelegatedToolCall``).
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
-        // Runtime agent IDs are unique per creation/attempt, and are also
-        // available to the permission broker before any operation executes.
-        let id = "acp:tool:\(event.agentID):\(event.toolCall.id)"
-        let phase = switch event.lifecycle {
-        case .started: "started"
-        case .completed: "completed"
-        }
-        // Claimed before the payload is built: a duplicate maps no file changes.
-        guard await claimDelegatedToolNotification(id + ":" + phase) else { return }
-        var update = switch event.lifecycle {
-        case .started:
-            ZenCODEACPBridge.toolCallCreateUpdate(for: event.toolCall, workingDirectory: workspaceURL)
-        case let .completed(result):
-            ZenCODEACPBridge.toolCallCompletionUpdate(
-                for: event.toolCall, result: result, workingDirectory: workspaceURL
-            )
-        }
-        update["toolCallId"] = id
-        update["title"] = "\(event.agentName) — \(update["title"] as? String ?? "")"
-        if case .started = event.lifecycle {
-            // The payload is the creation itself.
-            _ = presentedToolCalls.markPresented(id)
-        } else if presentedToolCalls.markPresented(id) {
-            // The client has not seen this call start (the turn was cancelled
-            // before it was shown): the creation goes first, so the update it
-            // is about to receive refers to a call it knows.
-            var creation = ZenCODEACPBridge.toolCallCreateUpdate(
-                for: event.toolCall,
-                workingDirectory: workspaceURL
-            )
-            creation["toolCallId"] = id
-            creation["title"] = "\(event.agentName) — \(creation["title"] as? String ?? "")"
-            await send(JSONValue.acpValue(from: creation))
-        }
-        await send(JSONValue.acpValue(from: update))
+        guard case .completed = event.lifecycle else { return }
+        await completeDelegatedToolCall(event)
     }
 
     /// Also covers backends that return without a turnEnded event, before an
@@ -204,5 +173,16 @@ struct ACPPromptPresenter: ChatSessionPresenter {
 }
 
 /// Default presenter of an ACP session controller. ACP turns always supply
-/// their prompt-bound ``ACPPromptPresenter``; nothing else is presented.
-struct ACPSilentPresenter: ChatSessionPresenter {}
+/// their prompt-bound ``ACPPromptPresenter``; nothing else is presented, but
+/// the completion of a delegated tool call a permission request announced
+/// while no prompt presents it (the prompt ended or was cancelled while the
+/// agent kept working), which closes the call's row
+/// (``ZenCODEACPBridge/completeDelegatedPermissionToolCall(_:sessionID:)``).
+struct ACPSilentPresenter: ChatSessionPresenter {
+    var completeDelegatedToolCall: (@Sendable (DirectSubAgentToolEvent) async -> Void)?
+
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        guard case .completed = event.lifecycle else { return }
+        await completeDelegatedToolCall?(event)
+    }
+}

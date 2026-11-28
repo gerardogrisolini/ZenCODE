@@ -179,9 +179,12 @@ extension AgentCoreSessionRunner {
     ///
     /// Strictly best-effort: resolution never gates the decision, and a missing
     /// backend, an unknown id, or a blank name falls back to the agent id. Only
-    /// `title` changes — `LocalExecPermissionAuthorizer` keys its consent cache
-    /// on tool name and command — so remembered approvals stay keyed exactly as
-    /// before. The single `await` here reads the backend's sub-agent registry,
+    /// presentation changes, the `title` and the name kept next to it
+    /// (``AgentToolAuthorizationRequest/delegatedAgentName``, for a channel
+    /// that shows the agent outside the title) — `LocalExecPermissionAuthorizer`
+    /// keys its consent cache on tool name and command — so remembered
+    /// approvals stay keyed exactly as before. The single `await` here reads
+    /// the backend's sub-agent registry,
     /// which never calls back into this runner, so it cannot stall a
     /// coordinator turn waiting on this actor.
     private func delegatedRequestForPresentation(
@@ -195,6 +198,6 @@ extension AgentCoreSessionRunner {
                 label = name
             }
         }
-        return request.withTitle("[agent \(label)] \(request.title)")
+        return request.namingDelegatedAgent(label)
     }
 }

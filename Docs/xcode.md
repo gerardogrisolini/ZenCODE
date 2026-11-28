@@ -146,11 +146,40 @@ never replaces a newer one, while `/tasks` answers with the graph as text on
 demand. Creating a delegated agent is distinct from that agent's execution and
 from task validation. Failed/blocked/cancelled plan entries are explicitly
 labelled because ACP's plan status enum has no matching failure values.
-Taskless idle or standby alone is not evidence of successful execution. The
-`title` of the
-`tool_call_update` that completes a tool call, a delegated agent's included, ends
-with the call's elapsed time as the terminal shows it (` · 1.25s`); the
-`tool_call` that creates it keeps the plain title.
+Taskless idle or standby alone is not evidence of successful execution. A tool
+call is described with standard ACP v1 fields only, because clients read `_meta`
+for nothing. The `tool_call` carries a readable `title`, the programmatic `name`
+(`local.exec`, `xcode-tools.XcodeRead`), the `kind`, the `locations`, and the
+tool's arguments as `rawInput`. The title is the bare command for `local.exec`
+(`git diff --check HEAD`, which clients use as the command label),
+`<action> <target>` for a tool with a presentation (`Read Sources/App.swift`,
+`Search needle`), and `<tool.name> <target>` for a tool without one, such as the
+`xcode-tools` ones. The `tool_call_update` that completes a call carries the
+final `status` and the result once, as `content`
+(text and diffs): it has no `title` (the one of the `tool_call` stays, with no
+elapsed time), and neither `rawInput` nor a `rawOutput` that would repeat it. The
+`rawInput` of a `session/request_permission` is `command`, `workingDirectory`,
+and `description`; a permission for a tool other than the shell has no original
+arguments and describes the operation in `command` (`delete -r /tmp/x`).
+
+The conversation text is described with standard fields as well. ZenCODE does not
+echo your prompt back (Xcode already shows the message you sent), and the session
+is titled by your first prompt, once: not by the folder's name, and not renamed
+by the prompts after it. Every message of the agent, text or thought, carries the
+standard `messageId`: the answer of the model is one message while it streams, the
+text that resumes after a tool call, a thought, or a plan is a new one, and the
+`Agent: … · Model: … · Thinking: …` line at the start of the session, the answer
+of a command, and the summary of the changed files are messages of their own,
+never joined with the model's answer. Reopening a conversation replays its
+messages with ids that are the same every time.
+
+The tool calls of a delegated agent are not presented in the session that owns
+the agent, as `codex-acp` does for a client without a sub-agent contract: the
+client sees the agent as one ordinary tool call, the row of its task attempt or
+of the taskless agent, and not the calls the agent makes. The session's own
+calls, the `agent.*` ones included, are presented as before. The exception is a
+delegated call that asks the operator's consent, described with the permission
+dialogs below.
 
 Diffs are **per operation**, not a reconstructed end-of-turn summary. When Xcode
 advertises the standard ACP filesystem capabilities, `local.read` /
@@ -173,7 +202,7 @@ capabilities are checked on every connection and are not persisted.
 
 Without negotiated client access, diffs are **per local operation**. The
 local write/edit/replace/multiEdit/append/applyPatch/delete/move paths capture
-actual before/committed text; delegated tool rows have agent-qualified IDs. Binary
+actual before/committed text. Binary
 or unreadable files, directories, failed/rolled-back operations, and opaque
 shell/Git/MCP effects retain text instead of inventing a diff. A move is represented
 as deletion at the source and a write at the destination. Partial rollback failures
@@ -197,6 +226,28 @@ fields. Legacy response envelopes are still decoded, but an invented `allow_*`
 option is not authorization. Full-access policy and persistent local.exec consent
 remain unchanged. Pending tool rows do not claim execution while permission is
 still being requested.
+
+The permission of a delegated agent's tool call stays on the root session and
+refers to a call the client knows. Right before the `session/request_permission`
+the session announces the call with a `tool_call`, its id agent-qualified
+(`acp:tool:<agent>:<call>`), with the fields of the request's `toolCall` (the
+readable title, the bare command for the shell, the `kind`, the `locations`,
+the `rawInput`), the tool's `name`, and `status: pending`. No title names the
+agent: the request's text does (`Requested by <agent>`). The call then always
+receives a final state: a refused, dismissed, or unanswered request ends it with
+a `tool_call_update` with `status: failed`; an allowed one sets it `in_progress`,
+and the completion of the tool closes it with the ordinary completing
+`tool_call_update` (status and content). This holds inside a prompt, after its
+cancellation, and outside any prompt, because the agent keeps working after the
+prompt that started it. A delegated call that needs no consent (an earlier
+`Allow Always`, full access) writes nothing. The rows belong to the session's
+incarnation: a closed or replaced session receives no update of a call an older
+incarnation announced. Two cases leave an allowed row `in_progress`, because the
+completion of the tool never reaches the session: an agent closed while the
+allowed tool runs (the runtime drops the events of a closed agent), and a session
+whose slot Telegram drives when the tool completes (Telegram presents it). These
+updates go to the client directly, as the permission request does, after the
+text the running prompt has buffered.
 
 Wire/schema tests **do not demonstrate that Xcode renders these views**. Rendering
 must be verified independently in a real Xcode session (plan replacement/clear,

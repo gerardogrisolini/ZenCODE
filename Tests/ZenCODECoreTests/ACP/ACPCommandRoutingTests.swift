@@ -168,7 +168,8 @@ struct ACPCommandRoutingTests {
         for line in ["/tasks", "/tasks status", "/tasks list", "/tasks ls", "/tasks LS"] {
             try await bridge.prompt(id: .number(1), params: ["sessionId": sessionID, "prompt": line])
             let answer = try #require(fixture.wire.updateTexts(kind: "agent_message_chunk").last)
-            #expect(fixture.wire.updateTexts(kind: "user_message_chunk").last == line)
+            // The client shows the line it sent: the agent does not echo it.
+            #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
             #expect(answer.contains("Tasks:"))
             #expect(answer.contains("Write the ACP answer"))
             #expect(answer.contains("Show the plan section"))

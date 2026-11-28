@@ -52,8 +52,11 @@ extension ACPCommandRoutingTests {
                 id: index + 1, to: fixture.bridge, sessionID: fixture.sessionID
             )
             #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "No task graph for this session.")
-            // The echo drops the agent mention, as it does in any client.
-            #expect(fixture.wire.updateTexts(kind: "user_message_chunk").last == "/tasks")
+            // The prompt is not echoed. The first one names the session, as
+            // the operator typed it: the agent mention dropped, the second one
+            // leaves the title alone.
+            #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
+            #expect(fixture.wire.sessionTitles() == ["/tasks"])
             #expect(fixture.wire.stopReason(for: index + 1) == "end_turn")
         }
         #expect(await fixture.backend.recordedPrompts().isEmpty)
@@ -77,7 +80,8 @@ extension ACPCommandRoutingTests {
 
         let graph = try #require(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID))
         #expect(graph.workflow?.originalGoal == "Preserve direct objective")
-        #expect(fixture.wire.updateTexts(kind: "user_message_chunk") == ["/goal Preserve direct objective"])
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
+        #expect(fixture.wire.sessionTitles() == ["/goal Preserve direct objective"])
         let prompt = try #require(await fixture.backend.recordedPrompts().first)
         #expect(prompt.contains("<system-reminder>Prefer the Xcode tools.</system-reminder>\n\nProject structure ("))
         let context = try #require(prompt.range(of: "The user has no file currently open."))
@@ -100,8 +104,9 @@ extension ACPCommandRoutingTests {
     }
 
     /// A leading mention of a known agent after Xcode's context switches the
-    /// session to that agent, as it does in any client; the echo drops the
-    /// mention, and the model gets the context before the operator's text.
+    /// session to that agent, as it does in any client; the session title
+    /// drops the mention, and the model gets the context before the operator's
+    /// text.
     @Test
     func anAgentMentionTypedInXcodeSwitchesTheAgentAndKeepsTheContext() async throws {
         let fixture = try await makeFixture(sessionID: "acp-xcode-mention-\(UUID().uuidString)")
@@ -113,7 +118,8 @@ extension ACPCommandRoutingTests {
 
         let configuration = try #require(await fixture.bridge.sessionConfigurationsForTesting().first)
         #expect(configuration.agentRole == .planner)
-        #expect(fixture.wire.updateTexts(kind: "user_message_chunk") == ["analyze the parser"])
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
+        #expect(fixture.wire.sessionTitles() == ["analyze the parser"])
         #expect(fixture.wire.stopReason(for: 1) == "end_turn")
         let prompt = try #require(await fixture.backend.recordedPrompts().last)
         let context = try #require(prompt.range(of: "The user has no file currently open."))

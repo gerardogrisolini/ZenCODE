@@ -26,7 +26,9 @@ private struct ACPPreparedPrompt {
     let operatorLine: String?
     /// The rendered prompt for an ordinary turn, with all of its context.
     let normalPrompt: String
-    /// The text the turn presents as the user's message.
+    /// The text the turn gives the session as its title, when it is the
+    /// first prompt of the conversation. It is never echoed back to the
+    /// client as a message.
     let visiblePromptText: String
     /// The coordinator line with context appended as a free-form argument,
     /// when the operator explicitly started such a command.
@@ -191,7 +193,7 @@ extension ZenCODEACPBridge {
 
     /// Runs one `session/prompt` turn that holds its reservation, in phases:
     /// prepare (the request's blocks, attachments, and agent mention), route
-    /// (the echo of the prompt and the command it carries), execute (the
+    /// (the title of the session and the command the prompt carries), execute (the
     /// turn's task on the model and its presentation), and settle.
     ///
     /// A completed turn answers before releasing its reservation. An error or
@@ -293,7 +295,7 @@ extension ZenCODEACPBridge {
 
         // Commands remain visible exactly as the client sent them (including an
         // optional leading agent mention for coordinator commands). Xcode's
-        // context is what the model reads, not what the echo and title show.
+        // context is what the model reads, not what the session title shows.
         let visibleSource: String
         if let source, coordinatorCommand != nil {
             visibleSource = source.followsXcodeContext ? source.text : rawPromptText
@@ -324,14 +326,20 @@ extension ZenCODEACPBridge {
         )
     }
 
-    /// Presents the prompt as the client sent it, then chooses what the turn
-    /// does with it: a command answered at once, or a generation.
+    /// Names the session after the prompt, when it has no title yet, then
+    /// chooses what the turn does with the prompt: a command answered at once,
+    /// or a generation. The prompt itself is not echoed: the client already
+    /// shows the message it sent (the history replay of `session/load` is the
+    /// only place a `user_message_chunk` is written).
     private func routePromptTurn(
         _ turn: ACPPromptTurn,
         _ prepared: ACPPreparedPrompt
     ) async throws -> ACPPromptTurnRoute {
-        await sendUserMessageChunk(sessionID: turn.sessionID, text: prepared.visiblePromptText)
-        await sendSessionInfoUpdate(sessionID: turn.sessionID, title: promptTitle(from: prepared.visiblePromptText))
+        await presentSessionTitleIfNeeded(
+            fromPrompt: prepared.visiblePromptText,
+            sessionID: turn.sessionID,
+            epoch: turn.epoch
+        )
 
         let commandRoute = try await routeACPCommandTurn(
             operatorLine: prepared.operatorLine,
@@ -348,7 +356,11 @@ extension ZenCODEACPBridge {
         case let .immediate(message):
             await writer.sendSessionUpdate(
                 sessionID: turn.sessionID,
-                update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: message)
+                update: Self.textChunkJSONUpdate(
+                    kind: "agent_message_chunk",
+                    text: message,
+                    messageID: Self.newMessageID()
+                )
             )
             return .finished(stopReason: "end_turn")
         case let .generate(modelPrompt, purpose, prelude):
@@ -372,7 +384,11 @@ extension ZenCODEACPBridge {
             if let prelude {
                 await writer.sendSessionUpdate(
                     sessionID: turn.sessionID,
-                    update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: prelude)
+                    update: Self.textChunkJSONUpdate(
+                        kind: "agent_message_chunk",
+                        text: prelude,
+                        messageID: Self.newMessageID()
+                    )
                 )
             }
             guard let liveCommandSession = await reservedPromptSession(
@@ -473,8 +489,8 @@ extension ZenCODEACPBridge {
         let workflowPromptID = session.activeWorkflowPromptID
         // A prompt still waiting for the startup offer of old task graphs has
         // no reservation yet: it is marked, so it ends as `cancelled` once the
-        // offer ends (the client answers the offer's pending permission
-        // request with `cancelled` itself).
+        // offer ends (the client answers the pending elicitation with `cancel`
+        // itself).
         cancelPromptsAwaitingResumableTaskGraphOffer(sessionID: sessionID, epoch: session.epoch)
         let cancelledPromptID = await host.cancelPrompt(in: session.slotID) { promptID in
             promptID == workflowPromptID

@@ -10,10 +10,13 @@ import ToolCore
 import ZenCODERuntime
 
 extension ZenCODEACPBridge {
-    public func sendUserMessageChunk(sessionID: String, text: String) async {
+    /// A message of the user, as `session/load` replays it. A `session/prompt`
+    /// never echoes the prompt: the client shows the message it sent. As
+    /// every chunk, it names its message (`messageId`).
+    public func sendUserMessageChunk(sessionID: String, text: String, messageID: String) async {
         await writer.sendSessionUpdate(
             sessionID: sessionID,
-            update: Self.textChunkJSONUpdate(kind: "user_message_chunk", text: text)
+            update: Self.textChunkJSONUpdate(kind: "user_message_chunk", text: text, messageID: messageID)
         )
     }
 
@@ -29,6 +32,12 @@ extension ZenCODEACPBridge {
     }
 
     public func promptTitle(from prompt: String) -> String {
+        Self.sessionTitle(fromPrompt: prompt)
+    }
+
+    /// The title a prompt gives its session: its first line, at most 80
+    /// characters.
+    static func sessionTitle(fromPrompt prompt: String) -> String {
         let firstLine = prompt
             .components(separatedBy: .newlines)
             .first?
@@ -40,12 +49,50 @@ extension ZenCODEACPBridge {
         return "\(firstLine.prefix(77))..."
     }
 
+    /// Gives the live incarnation `epoch` of `sessionID` the title of `prompt`
+    /// and tells the client, unless the session already has a title.
+    ///
+    /// The title is born once, from the first prompt of the conversation, as
+    /// in codex-acp: later prompts never change it, and a session that was
+    /// restored with a title (see ``restoredSessionTitle(savedName:history:displayTexts:)``)
+    /// keeps it. There is no placeholder title: until a prompt (or a restore)
+    /// names the session, nothing is sent. The title is claimed in one
+    /// synchronous step on the entry, so at most one `session_info_update` is
+    /// written for a title.
+    func presentSessionTitleIfNeeded(
+        fromPrompt prompt: String,
+        sessionID: String,
+        epoch: UInt64
+    ) async {
+        let title = Self.sessionTitle(fromPrompt: prompt)
+        guard title.nilIfBlank != nil else { return }
+        var didClaim = false
+        updateLiveSession(id: sessionID, epoch: epoch) { live in
+            guard live.sessionTitle == nil else { return }
+            live.sessionTitle = title
+            didClaim = true
+        }
+        guard didClaim else { return }
+        await sendSessionInfoUpdate(sessionID: sessionID, title: title)
+    }
+
+    /// The `tool_call` that announces a call.
+    ///
+    /// Everything the client needs to render the call is a standard ACP v1
+    /// field, because clients read `_meta` for nothing: the readable `title`
+    /// (``toolTitle(for:)``), the programmatic `name`, the `kind`, the
+    /// `locations`, and the tool arguments as `rawInput`. The title is fixed
+    /// here and the completion never repeats it; `rawInput` is sent once and
+    /// the completion does not repeat it either.
     public static func toolCallCreateUpdate(
         for toolCall: DirectAgentToolCall,
         workingDirectory: URL? = nil
     ) -> [String: Any] {
         var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
         update["sessionUpdate"] = "tool_call"
+        update["title"] = toolTitle(for: toolCall)
+        update["name"] = toolCall.name
+        update["rawInput"] = toolCall.argumentsObject
         update["status"] = "pending"
         update["content"] = [] as [Any]
         return update
@@ -115,10 +162,14 @@ extension ZenCODEACPBridge {
         return .object(data)
     }
 
-    /// The `tool_call_update` that completes a call. When the result carries
-    /// the time the tool executor measured (``DirectAgentToolResult/elapsed``),
-    /// its `title` ends with it (``toolTitle(_:elapsed:)``); nothing else of
-    /// the payload changes.
+    /// The `tool_call_update` that completes a call.
+    ///
+    /// It carries only what the completion adds: the final `status` and the
+    /// result as `content` (visible text and diffs), once. It has no `title`
+    /// (the one of the `tool_call` stays, so a client never replaces a command
+    /// label with a decorated one), no `rawInput` (already on the `tool_call`),
+    /// and no `rawOutput` or `_meta` copy of the result: `content` is the
+    /// result, as in codex-acp ("a command sends its output once").
     public static func toolCallCompletionUpdate(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,
@@ -127,7 +178,6 @@ extension ZenCODEACPBridge {
         var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
         update["sessionUpdate"] = "tool_call_update"
         update["status"] = result.isFailure ? "failed" : "completed"
-        update["title"] = toolTitle(toolTitle(for: toolCall), elapsed: result.elapsed)
         let artifacts = FileChangeArtifactMapper.artifacts(
             from: result.fileChanges,
             workingDirectory: workingDirectory
@@ -141,12 +191,6 @@ extension ZenCODEACPBridge {
             // multi-file operation to its command/workspace target.
             update["locations"] = resultLocations
         }
-        var metadata = update["_meta"] as? [String: Any] ?? [:]
-        metadata["rawOutput"] = [
-            "output": result.output,
-            "summary": result.summary
-        ]
-        update["_meta"] = metadata
         let visibleText = result.fileChanges.isEmpty ? result.output : [result.summary, result.output]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .reduce(into: [String]()) { texts, text in
@@ -187,14 +231,8 @@ extension ZenCODEACPBridge {
         ))
     }
 
-    /// `title` followed by ` · ` and `elapsed` as the terminal formats it
-    /// (``ToolCallPresentation/elapsedTimeText(_:)``, e.g. `Read file · 1.25s`);
-    /// `title` itself without `elapsed`.
-    static func toolTitle(_ title: String, elapsed: Duration?) -> String {
-        guard let elapsed else { return title }
-        return "\(title) · \(ToolCallPresentation.elapsedTimeText(elapsed))"
-    }
-
+    /// The fields `tool_call` and `tool_call_update` share: the id, the ACP
+    /// kind, and the locations the arguments point at.
     private static func toolCallCommonFields(
         for toolCall: DirectAgentToolCall,
         workingDirectory: URL?
@@ -202,13 +240,11 @@ extension ZenCODEACPBridge {
         let locations = toolLocations(for: toolCall, workingDirectory: workingDirectory)
         return [
             "toolCallId": toolCall.id,
-            "title": toolTitle(for: toolCall),
             "kind": acpToolKind(
                 ToolCallPresentation.toolKind(for: toolCall),
                 hasFileLocations: !locations.isEmpty
             ),
-            "locations": locations,
-            "_meta": ["rawInput": toolCall.argumentsObject]
+            "locations": locations
         ]
     }
 
@@ -222,19 +258,76 @@ extension ZenCODEACPBridge {
         ]
     }
 
-    static func textChunkJSONUpdate(kind: String, text: String) -> JSONValue {
-        .object([
+    /// A `user_message_chunk`, `agent_message_chunk`, or `agent_thought_chunk`
+    /// of text.
+    ///
+    /// `messageID` is the standard ACP `messageId`: every chunk of one message
+    /// shares it, and a change of it tells the client a new message started.
+    /// A chunk of a streamed message is written without one: the turn's update
+    /// pipeline (``ACPPromptUpdatePipeline``), which sees the whole stream in
+    /// order, gives it the id of the message it belongs to. Any other message
+    /// is one chunk with an id of its own (``newMessageID()``).
+    static func textChunkJSONUpdate(kind: String, text: String, messageID: String? = nil) -> JSONValue {
+        var update: [String: JSONValue] = [
             "sessionUpdate": .string(kind),
             "content": .object([
                 "type": .string("text"),
                 "text": .string(text)
             ])
-        ])
+        ]
+        if let messageID {
+            update["messageId"] = .string(messageID)
+        }
+        return .object(update)
+    }
+
+    /// The id of a new message of the live conversation: unique, so no two
+    /// messages of a session (or of two turns) ever share it.
+    static func newMessageID() -> String {
+        UUID().uuidString.lowercased()
+    }
+
+    /// The id of the message of the history entry `index` of the session
+    /// `sessionID`, as `session/load` replays it: the same for every replay of
+    /// the same history, and never one of a live message (``newMessageID()``).
+    static func replayMessageID(sessionID: String, index: Int) -> String {
+        "\(sessionID)#replay-\(index)"
     }
 
 
+    /// The ACP `title` of a tool call: readable, set once on the `tool_call`
+    /// and never changed by the completion.
+    ///
+    /// - A call of kind `execute` (today `local.exec`) is titled with the bare
+    ///   command, without the tool name: clients such as Zed and Xcode use the
+    ///   title as the command label (`git diff --check HEAD`).
+    /// - A call with a presentation is titled `<action> <target>` from its
+    ///   compact presentation (`Read Sources/App.swift`, `Search needle`).
+    ///   The target keeps the safe fallbacks of the compact presentation; with
+    ///   no target at all the action stands alone, and with no action the title
+    ///   is the one of a call without presentation.
+    /// - A call without a presentation (MCP tools such as `xcode-tools.*`) is
+    ///   titled `<tool.name> <target>`, or the name alone when no safe
+    ///   argument target exists.
+    ///
+    /// Specific to ACP: ``ToolCallPresentation/toolTitle(for:)``, shared by
+    /// the other consumers, is unchanged.
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
-        ToolCallPresentation.toolTitle(for: toolCall)
+        guard toolCall.presentation != nil else {
+            return ToolCallPresentation.toolTitle(for: toolCall)
+        }
+        let target = ToolCallPresentation.displayToolTarget(for: toolCall)
+        let presentation = ToolCallPresentation.resolved(for: toolCall, mode: .compact)
+        if presentation.kind == .execute {
+            return target ?? toolCall.name
+        }
+        guard let action = presentation.action?.nilIfBlank else {
+            return ToolCallPresentation.toolTitle(for: toolCall)
+        }
+        guard let target else {
+            return action
+        }
+        return "\(action) \(target)"
     }
 
     /// ACP v1 defines a closed tool-kind set: `read`, `edit`, `delete`, `move`,

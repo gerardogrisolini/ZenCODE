@@ -29,7 +29,8 @@ extension ACPSessionPersistenceTests {
             await bridge.handleMessage(Self.restoreRequest("session/load", id: 1, sessionID: sessionID, workspace: workspace))
 
             let responseIndex = try #require(wire.index(ofResponse: 1))
-            #expect(wire.message(at: responseIndex)?["result"]?.objectValue?["sessionId"]?.acpStringValue == sessionID)
+            let result = try #require(wire.message(at: responseIndex)?["result"]?.objectValue)
+            #expect(result["sessionId"] == nil)
             #expect(wire.chunks(before: responseIndex).isEmpty)
             #expect(await bridge.telegramTestConfiguration(sessionID: sessionID)?.history.isEmpty == true)
             // Restoring saves nothing.
@@ -169,7 +170,16 @@ extension ACPSessionPersistenceTests {
                 "params": ["protocolVersion": 1] as [String: Any],
             ])
 
-            let capabilities = wire.result(id: 1)?["agentCapabilities"]?.objectValue
+            let result = try #require(wire.result(id: 1))
+            #expect(Set(result.keys) == Set([
+                "protocolVersion",
+                "agentCapabilities",
+                "authMethods",
+                "agentInfo",
+                "_meta",
+            ]))
+            #expect(result["configOptions"] == nil)
+            let capabilities = result["agentCapabilities"]?.objectValue
             #expect(capabilities?["loadSession"] == .bool(true))
             #expect(capabilities?["sessionCapabilities"] == .object([
                 "close": .object([:]),
@@ -177,6 +187,66 @@ extension ACPSessionPersistenceTests {
                 "list": .object([:]),
                 "resume": .object([:]),
             ]))
+            await bridge.shutdown()
+        }
+    }
+
+    /// ACP v1 puts `sessionId` in the response to `session/new`, but not in
+    /// the responses to `session/load` or `session/resume`. The selected agent
+    /// remains available as informational `_meta` without adding non-schema
+    /// fields to those responses.
+    @Test
+    func sessionLifecycleResponseShapesFollowV1AndKeepAgentMetadata() async throws {
+        try await Self.withSupportDirectory { _, workspace in
+            let wire = ACPPersistenceWire()
+            let bridge = try Self.makeBridge(
+                wire: wire,
+                backend: ACPPersistenceBackend(),
+                workspace: workspace
+            )
+
+            await bridge.handleMessage(Self.newSessionRequest(
+                id: 1,
+                workspace: workspace,
+                extraParams: ["agentId": Self.customAgent.id]
+            ))
+            let newResult = try #require(wire.result(id: 1))
+            #expect(Set(newResult.keys) == Set(["sessionId", "modes", "configOptions", "_meta"]))
+            let sessionID = try #require(wire.sessionID(ofResponse: 1))
+            let newMeta = try #require(newResult["_meta"]?.objectValue)
+            #expect(newMeta["models"] != nil)
+            #expect(newMeta["agentId"] == .string(Self.customAgent.id))
+            #expect(newMeta["agentName"] == .string(Self.customAgent.name))
+
+            await bridge.handleMessage(Self.restoreRequest(
+                "session/load",
+                id: 2,
+                sessionID: sessionID,
+                workspace: workspace
+            ))
+            let loadResult = try #require(wire.result(id: 2))
+            #expect(Set(loadResult.keys) == Set(["modes", "configOptions", "_meta"]))
+            #expect(loadResult["sessionId"] == nil)
+            let loadMeta = try #require(loadResult["_meta"]?.objectValue)
+            #expect(loadMeta["models"] != nil)
+            #expect(loadMeta["agentId"] == .string(Self.customAgent.id))
+            #expect(loadMeta["agentName"] == .string(Self.customAgent.name))
+
+            await bridge.handleMessage(Self.restoreRequest(
+                "session/resume",
+                id: 3,
+                sessionID: sessionID,
+                workspace: workspace
+            ))
+            let resumeResult = try #require(wire.result(id: 3))
+            #expect(Set(resumeResult.keys) == Set(["modes", "configOptions", "_meta"]))
+            #expect(resumeResult["sessionId"] == nil)
+            let resumeMeta = try #require(resumeResult["_meta"]?.objectValue)
+            #expect(resumeMeta["models"] != nil)
+            #expect(resumeMeta["agentId"] == .string(Self.customAgent.id))
+            #expect(resumeMeta["agentName"] == .string(Self.customAgent.name))
+
+            #expect(await bridge.selectedAgentIDForTesting(sessionID: sessionID) == Self.customAgent.id)
             await bridge.shutdown()
         }
     }

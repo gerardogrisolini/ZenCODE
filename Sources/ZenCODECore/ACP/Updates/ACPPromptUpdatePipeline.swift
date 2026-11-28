@@ -17,6 +17,16 @@
 //  API changes: the bridge routes the same `consume`/`flush` calls through this
 //  single serialized point.
 //
+//  The pipeline also owns the `messageId` of what streams through it. A text
+//  chunk of the model (or a thought) is written by the presenter without one;
+//  the pipeline, which sees every update of the turn in wire order, gives it
+//  the id of the message it belongs to, and that message is one continuous
+//  stretch of the same stream: the text of the model, or a block of thought.
+//  It ends, and the next chunk opens a message with a new id, when anything
+//  else visible comes between (a thought, a tool call, a plan, a boundary of a
+//  model round or of the turn). A chunk that already carries an id is a message
+//  of its own and keeps it.
+//
 
 import Foundation
 import Synchronization
@@ -29,9 +39,12 @@ final class ACPPromptUpdatePipeline: Sendable {
         enum Kind: Sendable {
             /// Consume one update, optionally format reasoning and buffer it.
             case consume(JSONValue)
-            /// Flush the buffer, then write what it emits.
+            /// Flush the buffer, then write what it emits. What is written next
+            /// is another message.
             case flush
             /// End a model reasoning segment without flushing unrelated content.
+            /// A model round or the turn ended: the open streamed messages end
+            /// too, so the text that follows is a new message.
             case finishThought
             /// Flush the buffer, then write one custom notification after it.
             case flushThenNotify(method: String, params: JSONValue)
@@ -49,6 +62,21 @@ final class ACPPromptUpdatePipeline: Sendable {
         var nextOrdinal = 1
     }
 
+    /// The streamed messages the turn has open: the ids the next chunk of
+    /// that stream still belongs to. Only the unit that is running touches
+    /// them (units run one at a time, in order).
+    private struct OpenMessages {
+        var text: String?
+        var thought: String?
+    }
+
+    private enum ChunkStream {
+        case text
+        case thought
+    }
+
+    private let openMessages = Mutex<OpenMessages>(OpenMessages())
+    private let makeMessageID: @Sendable () -> String
     let buffer: ACPPromptUpdateBuffer
     private let writer: ACPWriter
     private let sessionID: String
@@ -73,6 +101,7 @@ final class ACPPromptUpdatePipeline: Sendable {
         normalizesChatGPTThoughts: Bool = false,
         isValid: @escaping @Sendable () async -> Bool = { true },
         canDeliver: @escaping @Sendable () async -> Bool = { true },
+        makeMessageID: @escaping @Sendable () -> String = { ZenCODEACPBridge.newMessageID() },
         onTaskStart: (@Sendable (Int) async -> Void)? = nil,
         onUnitStart: (@Sendable (Int) async -> Void)? = nil,
         onUnitFinish: (@Sendable (Int) async -> Void)? = nil
@@ -83,6 +112,7 @@ final class ACPPromptUpdatePipeline: Sendable {
         self.buffersUpdates = buffersUpdates
         self.isValid = isValid
         self.canDeliver = canDeliver
+        self.makeMessageID = makeMessageID
         self.thoughtNormalizer = Mutex(normalizesChatGPTThoughts ? ACPChatGPTThoughtNormalizer() : nil)
         self.onTaskStart = onTaskStart
         self.onUnitStart = onUnitStart
@@ -133,12 +163,65 @@ final class ACPPromptUpdatePipeline: Sendable {
         return true
     }
 
+    /// The text chunk `update` with the `messageId` of the message it belongs
+    /// to. A chunk that has one already is a message of its own: it keeps its
+    /// id and ends the streamed messages. Otherwise it continues the open
+    /// message of its stream, or opens one with a new id, and ends the open
+    /// message of the other stream.
+    private func taggingMessageID(_ update: JSONValue, as stream: ChunkStream) -> JSONValue {
+        guard case var .object(fields) = update else { return update }
+        let messageID: String = openMessages.withLock { open in
+            if let explicit = fields["messageId"]?.acpStringValue {
+                open = OpenMessages()
+                return explicit
+            }
+            switch stream {
+            case .text:
+                open.thought = nil
+                if let id = open.text { return id }
+                let id = makeMessageID()
+                open.text = id
+                return id
+            case .thought:
+                open.text = nil
+                if let id = open.thought { return id }
+                let id = makeMessageID()
+                open.thought = id
+                return id
+            }
+        }
+        fields["messageId"] = .string(messageID)
+        return .object(fields)
+    }
+
+    /// Ends the open streamed messages: what streams next opens a new one.
+    private func closeStreamedMessages() {
+        openMessages.withLock { $0 = OpenMessages() }
+    }
+
+    /// Whether an update of this kind, written between two text chunks, ends
+    /// the message they would share: anything the client shows as something
+    /// else. Metadata the client does not show in the conversation does not.
+    private static func interruptsStreamedMessages(_ kind: String?) -> Bool {
+        switch kind {
+        case "agent_message_chunk", "agent_thought_chunk",
+             "usage_update", "available_commands_update", "config_option_update", "session_info_update":
+            return false
+        default:
+            return true
+        }
+    }
+
     private func finishThought() async {
         let suffix = thoughtNormalizer.withLock { $0?.finish() ?? "" }
-        guard !suffix.isEmpty else { return }
-        await writeUpdate(ZenCODEACPBridge.textChunkJSONUpdate(
-            kind: "agent_thought_chunk", text: suffix
-        ))
+        if !suffix.isEmpty {
+            await writeUpdate(taggingMessageID(
+                ZenCODEACPBridge.textChunkJSONUpdate(kind: "agent_thought_chunk", text: suffix),
+                as: .thought
+            ))
+        }
+        // The block of thought ends: the next one is another message.
+        openMessages.withLock { $0.thought = nil }
     }
 
     private func run(_ unit: Unit, ordinal: Int, onAccepted: (@Sendable () async -> Void)?) async {
@@ -154,26 +237,37 @@ final class ACPPromptUpdatePipeline: Sendable {
                 await finishThought()
             }
             var accepted = true
-            if kind == "agent_thought_chunk",
-               let text = update.objectValue?["content"]?.objectValue?["text"]?.acpStringValue {
-                let normalized = thoughtNormalizer.withLock { $0?.consume(text) }
-                if let normalized {
+            if kind == "agent_thought_chunk" {
+                let text = update.objectValue?["content"]?.objectValue?["text"]?.acpStringValue
+                if let text, let normalized = thoughtNormalizer.withLock({ $0?.consume(text) }) {
                     if !normalized.isEmpty {
-                        accepted = await writeUpdate(ZenCODEACPBridge.textChunkJSONUpdate(
-                            kind: "agent_thought_chunk", text: normalized
+                        accepted = await writeUpdate(taggingMessageID(
+                            ZenCODEACPBridge.textChunkJSONUpdate(kind: "agent_thought_chunk", text: normalized),
+                            as: .thought
                         ))
                     }
                 } else {
-                    accepted = await writeUpdate(update)
+                    accepted = await writeUpdate(taggingMessageID(update, as: .thought))
                 }
+            } else if kind == "agent_message_chunk" {
+                accepted = await writeUpdate(taggingMessageID(update, as: .text))
             } else {
+                if Self.interruptsStreamedMessages(kind) {
+                    closeStreamedMessages()
+                }
                 accepted = await writeUpdate(update)
             }
             if accepted, let onAccepted { await onAccepted() }
         case .finishThought:
+            // The end of a model round or of the turn: what streams next is
+            // another message.
             await finishThought()
+            closeStreamedMessages()
         case .flush:
             await finishThought()
+            // Something is about to be written outside the stream, or the turn
+            // ends: the text that follows is another message.
+            closeStreamedMessages()
             for bufferedUpdate in buffer.flushAll() {
                 guard await canDeliver() else { return }
                 await writer.sendSessionUpdate(

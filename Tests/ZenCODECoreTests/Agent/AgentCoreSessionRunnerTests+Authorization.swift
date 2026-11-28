@@ -295,6 +295,13 @@ extension AgentCoreSessionRunnerTests {
         )
         #expect(approved == true)
         #expect(await approvingOperator.toolNames() == ["local.exec"])
+        // The runner names the agent in the title, as the terminal and
+        // Telegram show it, and keeps the name for a channel that shows it
+        // elsewhere; without a backend name the agent's id is the name.
+        let presented = try #require(await approvingOperator.recordedRequests().first)
+        #expect(presented.title == "[agent delegated-approver] local.exec")
+        #expect(presented.delegatedAgentName == "delegated-approver")
+        #expect(presented.titleWithoutDelegatedAgent == "local.exec")
 
         // A second turn swaps in a denying operator; the captured closure is the
         // same object, proving the request is answered by the session-scoped

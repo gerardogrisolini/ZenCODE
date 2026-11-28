@@ -16,15 +16,21 @@ import ZenCODERuntime
 /// actions, as one standard
 /// `agent_message_chunk`. The Summary lives on the wire only: it is never part
 /// of the model's history or the saved transcript, and `/changes` and `/undo`
-/// read it from the controller.
+/// read it from the controller. It is a message of its own (its chunk has a
+/// `messageId` no other message has), so a client never joins it with the
+/// model's answer.
 enum ACPFileChangeSummaryPresentation {
     /// The `agent_message_chunk` that presents `summary`, or `nil` when the
     /// turn changed no file.
-    static func update(for summary: TurnFileChangeSummary?) -> JSONValue? {
+    static func update(
+        for summary: TurnFileChangeSummary?,
+        messageID: String = ZenCODEACPBridge.newMessageID()
+    ) -> JSONValue? {
         guard let summary, !summary.entries.isEmpty else { return nil }
         return ZenCODEACPBridge.textChunkJSONUpdate(
             kind: "agent_message_chunk",
-            text: text(for: summary)
+            text: text(for: summary),
+            messageID: messageID
         )
     }
 

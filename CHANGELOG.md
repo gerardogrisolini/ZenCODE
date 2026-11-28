@@ -12,6 +12,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- ACP v1: `initialize` no longer returns `configOptions` outside its schema.
+  Selected-agent `agentId` and `agentName` are informational fields in the
+  session result's `_meta` alongside `models`; `session/new` returns its
+  `sessionId`, while `session/load` and `session/resume` do not.
+- ACP: the startup task-graph recovery offer uses a session-scoped
+  `elicitation/create` form only when the client explicitly advertises
+  `clientCapabilities.elicitation.form`. It no longer creates a synthetic tool
+  call or permission request. Decline, cancel, invalid responses and errors leave
+  checkpoints unchanged; deletion requires choosing **Delete all old tasks**.
+
 - macOS app: darkened the composer background in Dark Mode without changing
   its border or footer divider colors.
 - macOS app: aligned the conversation transcript and composer to the same
@@ -34,6 +44,66 @@ Release tags follow the strict `vX.Y.Z` contract described in
   left of the panel's bottom border, next to the `rows a–b/n` range, and the
   border shows `Chat: N new` while shared-chat messages are unread; messages
   that arrive while the panel is open stay unread.
+- ACP: tool calls are described with standard ACP v1 fields again, 
+  because clients read `_meta` for nothing. This reverts the
+  earlier change that made `rawInput` `_meta.rawInput`: the `tool_call` carries
+  the tool's arguments as `rawInput` and the programmatic tool name as `name`,
+  and `_meta` no longer holds `rawInput` or `rawOutput`. The same goes for the
+  `toolCall` of `session/request_permission`, whose `rawInput` is `command`,
+  `workingDirectory`, and `description`. The result goes out once, as the
+  `content` of the completing `tool_call_update`, which repeats neither the
+  arguments nor a `rawOutput`.
+- ACP: the `title` of a tool call is readable and is set once, by the
+  `tool_call`. The `tool_call_update` that completes a call has no `title`, so
+  the title no longer ends with the elapsed time (` · 1.25s`, added in an
+  earlier release) and Xcode no longer saves it in a command. The title of
+  `local.exec` is the bare command (`git diff --check HEAD`, not `local.exec
+  git diff --check HEAD`), the title of a tool with a presentation is
+  `<action> <target>` (`Read Sources/App.swift`), and the title of a tool
+  without one, such as the `xcode-tools` ones, is `<tool name> <target>`. The
+  titles of Telegram, the terminal, and the macOS app do not change.
+- ACP: the tool calls of a delegated agent are no longer forwarded to the
+  session that owns the agent, for a client without a
+  sub-agent contract: the client sees the agent as one tool call (its task
+  attempt or its taskless row), not each call it makes, and its titles no
+  longer start with the agent's name (`Worker — …`). A delegated call that asks
+  the operator's consent is the exception, so that its permission, which stays
+  on the root session, refers to a call the client knows: a `tool_call` (the
+  bare command as the title for the shell, `kind`, `rawInput`, `name`,
+  `pending`) comes right before the `session/request_permission`, a refused or
+  dismissed request ends it as `failed`, and an allowed one goes `in_progress`
+  until the tool's completion closes it, also after the prompt ended or was
+  cancelled. The permission names the agent in its text (`Requested by
+  <agent>`) instead of its title (`[agent <agent>] …`), which now follows the
+  rules of the other permissions. In the terminal and Telegram the permission
+  still names the agent in its title.
+- ACP: every `agent_message_chunk`, `agent_thought_chunk`, and replayed
+  `user_message_chunk` carries the standard `messageId`.
+  The model's text is one message while it streams without interruption; the
+  text that resumes after a tool call, a thought, a plan, or a new model round or
+  turn is a new message, and a block of thought is a message of its own. The
+  `Agent: … · Model: … · Thinking: …` line a session opens with (kept, so Xcode
+  shows the model and the agent), the answer of a command, the notices of the
+  task-graph offer, and the file-change summary are messages with ids of their
+  own and are never merged with the model's answer; their text is unchanged.
+  The prompt buffer only merges chunks of one message. A `session/load` replay
+  gives each entry an id made of the session id and the position of the entry,
+  so replaying the same history again gives the same ids.
+- ACP: a `session/prompt` no longer echoes the prompt as a `user_message_chunk`:
+  the client already shows the message it sent. The history replay of
+  `session/load` still writes them.
+- ACP: the session title (`session_info_update`) is born once from the first
+  prompt of the conversation, and no longer changes. It was
+  the name of the working directory at `session/new`, `session/load`, and
+  `session/resume`, then the first line of every prompt. Now `session/new` sends
+  none, the first prompt sends its first line (80 characters at most) and the
+  next prompts do not rename the session. A restored session announces, once,
+  the name it was saved under (the title `session/list` shows) or the first
+  prompt of its history, and keeps it.
+- Runtime: `AgentToolAuthorizationRequest` gains `delegatedAgentName`, the name
+  of the delegated agent the runner resolved, with `namingDelegatedAgent(_:)`
+  and `titleWithoutDelegatedAgent`, so a channel can show the agent outside the
+  title; the title the runner sets is unchanged.
 
 ### Fixed
 

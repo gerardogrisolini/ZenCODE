@@ -175,7 +175,8 @@ struct ACPSessionPersistenceTests {
             await bridge.handleMessage(Self.restoreRequest("session/load", id: 1, sessionID: sessionID, workspace: workspace))
 
             let responseIndex = try #require(wire.index(ofResponse: 1))
-            #expect(wire.message(at: responseIndex)?["result"]?.objectValue?["sessionId"]?.acpStringValue == sessionID)
+            let result = try #require(wire.message(at: responseIndex)?["result"]?.objectValue)
+            #expect(result["sessionId"] == nil)
             #expect(wire.chunks(before: responseIndex) == [
                 .init(kind: "user_message_chunk", text: "What is the capital of Italy?"),
                 .init(kind: "agent_message_chunk", text: "reply to: What is the capital of Italy?"),
@@ -368,7 +369,7 @@ struct ACPSessionPersistenceTests {
         defaultThinkingSelection: .medium
     )
 
-    private static let customAgent = AgentProfile(
+    static let customAgent = AgentProfile(
         id: "custom-agent",
         name: "Custom Agent",
         role: .developer,

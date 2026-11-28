@@ -165,7 +165,7 @@ extension ZenCODEACPBridge {
             hasPresentedInitialConfiguration: live.hasPresentedInitialConfiguration,
             presentedCommands: live.presentedCommands,
             promptUpdatePipeline: live.promptUpdatePipeline,
-            delegatedToolNotifications: live.delegatedToolNotifications,
+            delegatedPermissionToolCalls: live.delegatedPermissionToolCalls,
             tasklessObserver: live.tasklessObserver,
             taskGraphObserver: live.taskGraphObserver,
             tasklessPresentation: live.tasklessPresentation,
@@ -175,6 +175,7 @@ extension ZenCODEACPBridge {
             activePromptTaskID: live.activePromptTaskID,
             savedSessionLink: live.savedSessionLink,
             promptDisplayTexts: live.promptDisplayTexts,
+            sessionTitle: live.sessionTitle,
             controller: live.controller
         )
         session.baseAllowedToolNames = live.baseAllowedToolNames
@@ -329,19 +330,25 @@ extension ZenCODEACPBridge {
     /// `user_message_chunk` (a blank prompt with attachments says so), a
     /// block its `agent_thought_chunk` and `agent_message_chunk`; tool calls,
     /// their results, and system messages are not replayed.
+    ///
+    /// Every replayed entry is a message of its own, with the deterministic
+    /// `messageId` ``replayMessageID(sessionID:index:)``, derived from the
+    /// session id and the position of the entry: replaying the same history
+    /// again gives the client the same ids.
     public func replaySessionHistory(_ snapshot: AgentRuntimeSessionSnapshot) async {
         // A prompt the session presents with the operator's text alone — the
         // context Xcode sent before it removed — is replayed that way, as the
         // saved session presents it (see `promptDisplayTexts`).
         let displayTexts = sessions[snapshot.sessionID]?.promptDisplayTexts ?? [:]
-        for kind in ChatTurnEntry.kinds(fromTranscript: snapshot.history) {
+        for (index, kind) in ChatTurnEntry.kinds(fromTranscript: snapshot.history).enumerated() {
+            let messageID = Self.replayMessageID(sessionID: snapshot.sessionID, index: index)
             switch kind {
             case let .userPrompt(text, attachments, _):
                 let presented = displayTexts[text.trimmingCharacters(in: .whitespacesAndNewlines)] ?? text
                 guard let text = Self.replayText(prompt: presented, attachments: attachments) else {
                     continue
                 }
-                await sendUserMessageChunk(sessionID: snapshot.sessionID, text: text)
+                await sendUserMessageChunk(sessionID: snapshot.sessionID, text: text, messageID: messageID)
             case let .thought(thought):
                 // Snapshots have no per-message provider provenance. The current
                 // snapshot.modelID may follow a provider switch, so replay must
@@ -349,7 +356,7 @@ extension ZenCODEACPBridge {
                 // A thought entry is trimmed and never blank.
                 await writer.sendSessionUpdate(
                     sessionID: snapshot.sessionID,
-                    update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)
+                    update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought, messageID: messageID)
                 )
             case let .assistantText(content):
                 guard let text = content.nilIfBlank else {
@@ -357,12 +364,35 @@ extension ZenCODEACPBridge {
                 }
                 await writer.sendSessionUpdate(
                     sessionID: snapshot.sessionID,
-                    update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: text)
+                    update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: text, messageID: messageID)
                 )
             default:
                 continue
             }
         }
+    }
+
+    /// The title of a session restored with `history`: the name it was saved
+    /// under (what `session/list` titles it with), else the title its first
+    /// prompt gives (``sessionTitle(fromPrompt:)``), the text a replay shows
+    /// for it; `nil` for a session without either, which is named by its
+    /// first prompt. A restored session keeps this title for good.
+    static func restoredSessionTitle(
+        savedName: String?,
+        history: [AgentRuntimeMessage],
+        displayTexts: [String: String]
+    ) -> String? {
+        if let savedName = savedName?.nilIfBlank {
+            return savedName
+        }
+        for kind in ChatTurnEntry.kinds(fromTranscript: history) {
+            guard case let .userPrompt(text, attachments, _) = kind else { continue }
+            let presented = displayTexts[text.trimmingCharacters(in: .whitespacesAndNewlines)] ?? text
+            if let shown = replayText(prompt: presented, attachments: attachments) {
+                return sessionTitle(fromPrompt: shown)
+            }
+        }
+        return nil
     }
 
     /// The text a replayed prompt shows: the prompt, or, for a blank prompt

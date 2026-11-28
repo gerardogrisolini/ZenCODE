@@ -44,11 +44,11 @@ extension ACPSessionPersistenceTests {
         ]
     }
 
-    /// The client's echo and the session title show what the operator typed,
-    /// never the context Xcode sent with it: the context reaches the model, not
-    /// the conversation the editor displays.
+    /// The session title shows what the operator typed, never the context
+    /// Xcode sent with it: the context reaches the model, not the conversation
+    /// the editor displays. The prompt itself is not echoed back.
     @Test
-    func theEchoAndTitleOfATurnShowOnlyTheOperatorsText() async throws {
+    func theTitleOfATurnShowsOnlyTheOperatorsText() async throws {
         try await Self.withSupportDirectory { _, workspace in
             let wire = ACPPersistenceWire()
             let backend = ACPPersistenceBackend()
@@ -65,9 +65,9 @@ extension ACPSessionPersistenceTests {
             let echoes = wire.chunks(before: wire.count)
                 .filter { $0.kind == "user_message_chunk" }
                 .map(\.text)
-            #expect(echoes == ["Domanda vera"])
+            #expect(echoes.isEmpty)
             let titles = wire.titles(sessionID: sessionID)
-            #expect(titles.last == "Domanda vera")
+            #expect(titles == ["Domanda vera"])
             #expect(titles.allSatisfy { !$0.contains("<system-reminder>") && !$0.contains("Project structure") })
             // The model still gets the whole prompt.
             let prompt = try #require(await backend.observations.last?.prompt)

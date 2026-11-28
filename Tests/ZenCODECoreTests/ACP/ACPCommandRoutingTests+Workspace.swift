@@ -99,7 +99,8 @@ extension ACPCommandRoutingTests {
             id: .number(Double(requestID)),
             params: ["sessionId": fixture.sessionID, "prompt": line]
         )
-        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").last == line)
+        // The client shows the line it sent: the agent does not echo it.
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
         #expect(fixture.wire.stopReason(for: requestID) == "end_turn")
         return try #require(fixture.wire.updateTexts(kind: "agent_message_chunk").last)
     }
@@ -180,9 +181,10 @@ extension ACPCommandRoutingTests {
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "File changes reverted.")
         #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 1\n")
         await sendBlocks([structure, ["type": "text", "text": "/changes diff"]], id: 7, in: fixture)
-        #expect(fixture.wire.updateTexts(kind: "user_message_chunk") == [
-            "/changes diff", "/changes --diff", "/undo now", "/changes", "/undo", "/undo", "/changes diff",
-        ])
+        // No echo of the lines. The first one, shown without the context the
+        // client sent before it, named the session.
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
+        #expect(fixture.wire.sessionTitles() == ["/changes diff"])
         #expect(await fixture.backend.recordedPrompts().isEmpty)
         for id in 1...7 { #expect(fixture.wire.stopReason(for: id) == "end_turn") }
     }
@@ -243,7 +245,8 @@ extension ACPCommandRoutingTests {
         await sendBlocks([structure, ["type": "text", "text": "/undo"]], id: 2, in: fixture)
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "File changes reverted.")
         #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 1\n")
-        #expect(fixture.wire.updateTexts(kind: "user_message_chunk") == ["/changes diff", "/undo"])
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
+        #expect(fixture.wire.sessionTitles() == ["/changes diff"])
         for id in 1...2 { #expect(fixture.wire.stopReason(for: id) == "end_turn") }
         #expect(await fixture.backend.recordedPrompts().isEmpty)
     }

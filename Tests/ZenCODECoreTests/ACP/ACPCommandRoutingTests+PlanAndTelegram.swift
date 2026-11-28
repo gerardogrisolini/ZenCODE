@@ -33,9 +33,8 @@ extension ACPCommandRoutingTests {
         #expect(state.activePlan == nil)
         #expect(state.brainstorming?.isAwaitingReply == true)
         #expect(state.brainstorming?.plannerAgentID == "acp-plan-author")
-        #expect(wire.updateTexts(kind: "user_message_chunk").contains(
-            "/plan unify ACP and Telegram"
-        ))
+        // The client shows the line it sent: the agent does not echo it.
+        #expect(wire.updateTexts(kind: "user_message_chunk").isEmpty)
         let firstTurnMessages = wire.updateTexts(kind: "agent_message_chunk")
         #expect(firstTurnMessages.first?.hasPrefix("Agent:") == true)
         #expect(Array(firstTurnMessages.dropFirst()) == [
@@ -157,12 +156,7 @@ extension ACPCommandRoutingTests {
         #expect((await backend.recordedPrompts()).last?.contains(
             "Goal: validate shared workflow routing"
         ) == true)
-        #expect(wire.updateTexts(kind: "user_message_chunk").suffix(4) == [
-            "/plan clear",
-            "/plan load",
-            "/plan clear",
-            "/goal validate shared workflow routing",
-        ])
+        #expect(wire.updateTexts(kind: "user_message_chunk").isEmpty)
 
         try await bridge.prompt(id: .number(12), params: [
             "sessionId": sessionID,
@@ -173,8 +167,7 @@ extension ACPCommandRoutingTests {
         #expect(reviewPrompt.contains("Review focus requested by the user: focus on ACP routing"))
         #expect(reviewPrompt.contains("profile \"\(AgentProfileRole.reviewer.rawValue)\""))
         #expect(reviewPrompt.contains("graph=workflow_"))
-        #expect(wire.updateTexts(kind: "user_message_chunk").last
-            == "/review focus on ACP routing")
+        #expect(wire.updateTexts(kind: "user_message_chunk").isEmpty)
         #expect(wire.stopReason(for: 11) == "end_turn")
     }
 

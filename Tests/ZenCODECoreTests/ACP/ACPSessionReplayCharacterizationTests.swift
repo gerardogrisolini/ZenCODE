@@ -43,6 +43,66 @@ struct ACPSessionReplayCharacterizationTests {
         #expect(try wire.messages() == Self.golden(sessionID: sessionID))
     }
 
+    /// Every replayed entry is a message with a `messageId`, derived from the
+    /// session id and the position of the entry in the rebuilt log: the same
+    /// history gives the same ids at every replay (even in another bridge,
+    /// as after a restart), and no two entries of one replay share an id.
+    @Test
+    func replayingTheSameHistoryAgainGivesTheSameMessageIDs() async throws {
+        let sessionID = "acp-replay-stable-ids"
+        func replayedMessageIDs() async throws -> [String] {
+            let wire = ReplayWire()
+            let bridge = try Self.makeBridge(wire: wire)
+            await bridge.replaySessionHistory(AgentRuntimeSessionSnapshot(
+                sessionID: sessionID,
+                modelID: "replay-model",
+                workingDirectoryPath: FileManager.default.temporaryDirectory.path,
+                systemPrompt: nil,
+                cacheKey: nil,
+                history: Self.history,
+                allowedToolNames: nil,
+                thinkingSelection: nil,
+                preserveThinking: false
+            ))
+            return try wire.messages().map { message in
+                try #require(
+                    message.objectValue?["params"]?.objectValue?["update"]?.objectValue?["messageId"]?.stringValue
+                )
+            }
+        }
+
+        let first = try await replayedMessageIDs()
+        let second = try await replayedMessageIDs()
+        #expect(first.count == 10)
+        #expect(first == second)
+        #expect(Set(first).count == first.count)
+        // Not the id of a live message (a UUID): derived from the session.
+        #expect(first.allSatisfy { $0.hasPrefix("\(sessionID)#") })
+        // More history after the replayed one leaves the ids of the earlier
+        // entries as they were.
+        let wire = ReplayWire()
+        let bridge = try Self.makeBridge(wire: wire)
+        await bridge.replaySessionHistory(AgentRuntimeSessionSnapshot(
+            sessionID: sessionID,
+            modelID: "replay-model",
+            workingDirectoryPath: FileManager.default.temporaryDirectory.path,
+            systemPrompt: nil,
+            cacheKey: nil,
+            history: Self.history + [
+                AgentRuntimeMessage(role: .user, content: "And the lexer?"),
+                AgentRuntimeMessage(role: .assistant, content: "Also fine."),
+            ],
+            allowedToolNames: nil,
+            thinkingSelection: nil,
+            preserveThinking: false
+        ))
+        let longer = try wire.messages().map {
+            $0.objectValue?["params"]?.objectValue?["update"]?.objectValue?["messageId"]?.stringValue
+        }
+        #expect(longer.count == first.count + 2)
+        #expect(Array(longer.prefix(first.count)) == first.map { Optional($0) })
+    }
+
     // MARK: - Fixture
 
     /// A history with every element a runtime history holds, oldest first.
@@ -103,26 +163,30 @@ struct ACPSessionReplayCharacterizationTests {
         func literal(_ text: String) throws -> String {
             String(decoding: try JSONEncoder().encode(text), as: UTF8.self)
         }
-        func update(_ kind: String, _ text: String) throws -> String {
+        func update(_ kind: String, _ text: String, _ index: Int) throws -> String {
             #"{"jsonrpc":"2.0","method":"session\/update","params":{"sessionId":"#
                 + (try literal(sessionID))
                 + #","update":{"content":{"text":"#
                 + (try literal(text))
-                + #","type":"text"},"sessionUpdate":"#
+                + #","type":"text"},"messageId":"#
+                + (try literal("\(sessionID)#replay-\(index)"))
+                + #","sessionUpdate":"#
                 + (try literal(kind))
                 + #"}}}"#
         }
+        // The index is the position of the entry in the rebuilt log (the
+        // entries of tool calls and the blank prompt take indexes too).
         let lines = [
-            try update("user_message_chunk", "Read the parser"),
-            try update("agent_thought_chunk", "The parser is in Sources."),
-            try update("agent_message_chunk", "I will read it."),
-            try update("agent_thought_chunk", "Only a thought."),
-            try update("agent_message_chunk", "The parser is fine."),
-            try update("user_message_chunk", "Analyze the attached media."),
-            try update("agent_message_chunk", "I see a screenshot."),
-            try update("user_message_chunk", "Compare with this"),
-            try update("agent_thought_chunk", "Compared."),
-            try update("agent_message_chunk", "They match."),
+            try update("user_message_chunk", "Read the parser", 0),
+            try update("agent_thought_chunk", "The parser is in Sources.", 1),
+            try update("agent_message_chunk", "I will read it.", 2),
+            try update("agent_thought_chunk", "Only a thought.", 9),
+            try update("agent_message_chunk", "The parser is fine.", 10),
+            try update("user_message_chunk", "Analyze the attached media.", 11),
+            try update("agent_message_chunk", "I see a screenshot.", 12),
+            try update("user_message_chunk", "Compare with this", 14),
+            try update("agent_thought_chunk", "Compared.", 17),
+            try update("agent_message_chunk", "They match.", 18),
         ]
         return try lines.map { line in
             try #require(ReplayWire.jsonValue(Data(line.utf8)), "Not JSON: \(line)")

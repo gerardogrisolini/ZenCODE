@@ -280,6 +280,6 @@ extension ZenCODEACPBridge {
 
 extension ZenCODEACPBridge {
     func lifecycleAgentIDForTesting(sessionID: String) -> String? {
-        sessionLifecycleResult(sessionID: sessionID)["agentId"] as? String
+        (sessionLifecycleResult(sessionID: sessionID)["_meta"] as? [String: Any])?["agentId"] as? String
     }
 }

@@ -24,7 +24,7 @@ import ZenCODERuntime
 /// for it to end (a `session/cancel` meanwhile ends that prompt as
 /// `cancelled`), a `session/close` cancels it before it drains the prompt
 /// handlers, and `shutdown()` cancels every one. Cancelling the task makes
-/// its pending `session/request_permission` return, so the offer ends as
+/// its pending `elicitation/create` return, so the offer ends as
 /// Start fresh. A project with nothing to resume runs the session exactly as
 /// before.
 extension ZenCODEACPBridge {
@@ -72,7 +72,7 @@ extension ZenCODEACPBridge {
     /// before its reply, so a `session/prompt`
     /// the client sends right after the reply already finds the offer and
     /// waits for it, and opens the gate once the reply, the session info and
-    /// the available commands are on the wire: no `session/request_permission`
+    /// the available commands are on the wire: no `elicitation/create`
     /// reaches the client before the session it names. A gate never opened
     /// (the task is cancelled first) ends the offer without asking anything.
     func registerResumableTaskGraphOffer(
@@ -85,7 +85,9 @@ extension ZenCODEACPBridge {
             return gate
         }
         let controller = session.controller
-        let choiceHost = ACPResumableTaskGraphChoiceHost(writer: writer, sessionID: sessionID)
+        let choiceHost = ACPResumableTaskGraphChoiceHost(
+            writer: writer, sessionID: sessionID, supportsForm: clientSupportsFormElicitation
+        )
         let task = Task(name: "ZenCODE.ACP.resume-task-graphs") {
             // Ends when `session/new` opens the gate, or at once when the
             // offer is cancelled first.
@@ -108,12 +110,15 @@ extension ZenCODEACPBridge {
     /// to the editor, in order, as `agent_message_chunk` updates of the
     /// session, only while it is still the incarnation `epoch`: one chunk per
     /// notice, its text trimmed, and from the second on preceded by a blank
-    /// line, so the message the client concatenates stays readable.
+    /// line, so the message the client concatenates stays readable. The
+    /// notices of one offer are one message: its chunks share a `messageId`,
+    /// which no other message of the session has.
     func presentResumableTaskGraphNotices(
         _ notices: [ChatSessionNotice],
         sessionID: String,
         epoch: UInt64
     ) async {
+        let messageID = Self.newMessageID()
         for (index, notice) in notices.enumerated() {
             guard !Task.isCancelled, liveSession(id: sessionID, epoch: epoch) != nil else {
                 return
@@ -124,7 +129,8 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 update: Self.textChunkJSONUpdate(
                     kind: "agent_message_chunk",
-                    text: index == 0 ? text : "\n\n" + text
+                    text: index == 0 ? text : "\n\n" + text,
+                    messageID: messageID
                 )
             )
         }
@@ -196,7 +202,7 @@ extension ZenCODEACPBridge {
     /// Marks every prompt of the incarnation `epoch` of `sessionID` that is
     /// waiting for the offer as cancelled, for `session/cancel`. The offer
     /// itself goes on: the client answers its pending
-    /// `session/request_permission` with `cancelled`, which ends it.
+    /// `elicitation/create` with `cancel`, which ends it.
     func cancelPromptsAwaitingResumableTaskGraphOffer(sessionID: String, epoch: UInt64) {
         let binding = SessionBinding(sessionID: sessionID, epoch: epoch)
         for (token, wait) in promptsAwaitingResumableTaskGraphOffer where wait.binding == binding {

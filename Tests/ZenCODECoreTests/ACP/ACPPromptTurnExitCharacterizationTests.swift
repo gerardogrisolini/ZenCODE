@@ -253,10 +253,11 @@ struct ACPPromptTurnExitCharacterizationTests {
         let sessionID: String
     }
 
-    /// A bridge with one session that already ran a first prompt, so the
-    /// turns below no longer present the session's commands and its initial
-    /// configuration.
-    private static func makeFixture() async throws -> Fixture {
+    /// A bridge with one session that already ran a first prompt (unless
+    /// `warmUp` is `false`), so the turns below no longer present the
+    /// session's commands and its initial configuration, and the session
+    /// already has the title its first prompt gave it.
+    private static func makeFixture(warmUp: Bool = true) async throws -> Fixture {
         let transport = PromptExitTransport()
         let backend = PromptExitBackend()
         let configuration = try AgentConfiguration(
@@ -283,8 +284,10 @@ struct ACPPromptTurnExitCharacterizationTests {
             allowedToolNames: []
         ))
         let fixture = Fixture(bridge: bridge, transport: transport, backend: backend, sessionID: sessionID)
-        await send(fixture, id: 1, text: "warm up")
-        #expect(transport.trace(of: 1, sessionID: sessionID).last == "stopReason: end_turn")
+        if warmUp {
+            await send(fixture, id: 1, text: "warm up")
+            #expect(transport.trace(of: 1, sessionID: sessionID).last == "stopReason: end_turn")
+        }
         return fixture
     }
 
@@ -341,8 +344,6 @@ struct ACPPromptTurnExitCharacterizationTests {
         await prompt.value
 
         #expect(fixture.transport.trace(of: 2, sessionID: fixture.sessionID, from: start) == [
-            "user_message_chunk: /review",
-            "session_info_update",
             "agent_message_chunk: ZenCODE: /review requires the sub-agent tools in this ACP session.",
             "stopReason: end_turn",
         ])
@@ -353,14 +354,15 @@ struct ACPPromptTurnExitCharacterizationTests {
 
     @Test
     func aCancelThatLandsBeforeTheRoutingEndsThePromptCancelledWithoutRunningTheModel() async throws {
-        let fixture = try await Self.makeFixture()
+        // The session's first prompt: it names the session before it routes.
+        let fixture = try await Self.makeFixture(warmUp: false)
         let start = fixture.transport.count
         let sessionID = fixture.sessionID
-        // Hold the writer on the prompt's own echo: the prompt holds its
-        // reservation and has not routed yet.
+        // Hold the writer on the title the prompt gives the session: the
+        // prompt holds its reservation and has not routed yet.
         let hold = fixture.transport.holdWriter { message in
             message.objectValue?["params"]?.objectValue?["update"]?.objectValue?["sessionUpdate"]
-                == .string("user_message_chunk")
+                == .string("session_info_update")
         }
         let prompt = Task { await Self.send(fixture, id: 2, text: "never routed") }
         await hold.reached.wait()
@@ -377,24 +379,25 @@ struct ACPPromptTurnExitCharacterizationTests {
         await prompt.value
         try await cancel.value
 
-        #expect(fixture.transport.trace(of: 2, sessionID: sessionID, from: start) == [
-            "user_message_chunk: never routed",
-            "session_info_update",
-            "stopReason: cancelled",
-        ])
+        let trace = fixture.transport.trace(of: 2, sessionID: sessionID, from: start)
+        #expect(trace.first == "session_info_update")
+        #expect(trace.last == "stopReason: cancelled")
+        // Nothing of the turn ran: no echo of the prompt, no text of the model.
+        #expect(!trace.contains { $0.hasPrefix("user_message_chunk") || $0.hasPrefix("agent_message_chunk") })
         #expect(fixture.transport.replies(to: 50).count == 1)
-        #expect(await fixture.backend.prompts == ["warm up"])
+        #expect(await fixture.backend.prompts.isEmpty)
         await Self.expectSessionAcceptsANewPrompt(fixture, id: 3)
         await fixture.bridge.shutdown()
     }
 
     @Test
-    func aCancelledEchoCannotReplaceTheNextOwnersFenceAndRepliesWhileTracked() async throws {
-        let fixture = try await Self.makeFixture()
+    func aCancelledTitleWriteCannotReplaceTheNextOwnersFenceAndRepliesWhileTracked() async throws {
+        // The session's first prompt: the write of its title is where it is held.
+        let fixture = try await Self.makeFixture(warmUp: false)
         let (host, slotID, controller) = try #require(await fixture.bridge.promptExitSlot(sessionID: fixture.sessionID))
         let echo = fixture.transport.holdWriter { message in
             message.objectValue?["params"]?.objectValue?["update"]?.objectValue?["sessionUpdate"]
-                == .string("user_message_chunk")
+                == .string("session_info_update")
         }
         let prompt = Task { await Self.send(fixture, id: 2, text: "/tasks") }
         await echo.reached.wait()
@@ -402,7 +405,7 @@ struct ACPPromptTurnExitCharacterizationTests {
         let tokens = await fixture.bridge.promptHandlerTokensSnapshot(sessionID: fixture.sessionID)
         #expect(tokens.count == 1)
 
-        // The writer is still pinned on A's echo, so use the owner's cancel
+        // The writer is still pinned on A's title, so use the owner's cancel
         // primitive directly. B holds both the replacement reservation and
         // its real controller fence before A can try to route.
         let oldPromptID = await host.activePromptID(in: slotID)
@@ -426,7 +429,7 @@ struct ACPPromptTurnExitCharacterizationTests {
         #expect(controller.isCurrent(fence))
         controller.endCommandFence(fence)
         #expect(await host.releasePrompt(replacement))
-        #expect(await fixture.backend.prompts == ["warm up"])
+        #expect(await fixture.backend.prompts.isEmpty)
         await fixture.bridge.shutdown()
     }
 
@@ -444,8 +447,6 @@ struct ACPPromptTurnExitCharacterizationTests {
         await prompt.value
 
         #expect(fixture.transport.trace(of: 2, sessionID: fixture.sessionID, from: start) == [
-            "user_message_chunk: hello",
-            "session_info_update",
             "stopReason: end_turn",
         ])
         #expect(await fixture.backend.prompts == ["warm up", "hello"])
@@ -463,8 +464,6 @@ struct ACPPromptTurnExitCharacterizationTests {
         await prompt.value
 
         #expect(fixture.transport.trace(of: 2, sessionID: fixture.sessionID, from: start) == [
-            "user_message_chunk: pinned turn",
-            "session_info_update",
             "stopReason: cancelled",
         ])
         #expect(fixture.transport.replies(to: 50).count == 1)
@@ -485,8 +484,6 @@ struct ACPPromptTurnExitCharacterizationTests {
         await prompt.value
 
         #expect(fixture.transport.trace(of: 2, sessionID: fixture.sessionID, from: start) == [
-            "user_message_chunk: explode",
-            "session_info_update",
             "error -32603: the backend failed the turn",
         ])
         await Self.expectSessionAcceptsANewPrompt(fixture, id: 3)
@@ -529,7 +526,7 @@ struct ACPPromptTurnExitCharacterizationTests {
             let trace = fixture.transport.trace(of: id, sessionID: sessionID, from: start)
             #expect(fixture.transport.replies(to: id).count == 1)
             #expect(trace.last == "stopReason: cancelled")
-            #expect(trace.first == "user_message_chunk: pinned turn \(attempt)")
+            #expect(!trace.contains { $0.hasPrefix("user_message_chunk") })
             #expect(await fixture.bridge.promptExitReservedPromptID(sessionID: sessionID) == nil)
             #expect(await !fixture.bridge.promptExitHasActivePromptTask(sessionID: sessionID))
         }

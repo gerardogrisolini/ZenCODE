@@ -14,6 +14,9 @@ extension ZenCODEACPBridge {
     public func initialize(id: JSONValue?, params: [String: Any]) async throws {
         try ensureNotShutDown()
         clientFileSystem = ACPClientFileSystem.negotiated(writer: writer, params: params)
+        let capabilities = params["clientCapabilities"] as? [String: Any]
+        let elicitation = capabilities?["elicitation"] as? [String: Any]
+        clientSupportsFormElicitation = elicitation?["form"] as? [String: Any] != nil
         let protocolVersion = 1
         let authMethods = Self.authenticationMethods(from: params)
         advertisedAuthenticationMethodIDs = Set(
@@ -40,7 +43,6 @@ extension ZenCODEACPBridge {
                     "resume": [:]
                 ]
             ],
-            "configOptions": configOptions(for: defaultModelID),
             "agentInfo": [
                 "name": "ZenCODE",
                 "title": "ZenCODE",

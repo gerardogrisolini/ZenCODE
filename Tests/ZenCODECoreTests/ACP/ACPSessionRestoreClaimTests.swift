@@ -105,7 +105,7 @@ struct ACPSessionRestoreClaimTests {
         #expect(await bridge.isSessionRestoreClaimed("shared-id") == false)
         await bridge.handleMessage(Self.request(2, "session/load", sessionID: "shared-id"))
         #expect(transport.error(id: 2) == nil)
-        #expect(transport.result(id: 2)?["sessionId"]?.acpStringValue == "shared-id")
+        #expect(transport.result(id: 2)?["sessionId"] == nil)
         #expect(await bridge.isSessionRestoreClaimed("shared-id") == false)
         await bridge.shutdown()
     }

@@ -49,6 +49,26 @@ final class ACPCommandWire: Sendable {
         }
     }
 
+    /// The `session/update` payloads of `kind`, in order.
+    func updates(kind: String) -> [[String: JSONValue]] {
+        storage.withLock { values in
+            values.compactMap { value in
+                guard let object = value.objectValue,
+                      object["method"] == .string("session/update"),
+                      let update = object["params"]?.objectValue?["update"]?.objectValue,
+                      update["sessionUpdate"] == .string(kind) else {
+                    return nil
+                }
+                return update
+            }
+        }
+    }
+
+    /// The `title` of every `session_info_update`, in order.
+    func sessionTitles() -> [String] {
+        updates(kind: "session_info_update").compactMap { $0["title"]?.stringValue }
+    }
+
     /// The `plan` updates sent, in order. An entry that lost its `content` or
     /// its `status` keeps a placeholder: a malformed plan must never read as an
     /// empty one.

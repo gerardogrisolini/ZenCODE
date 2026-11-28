@@ -56,10 +56,8 @@ extension ZenCODEACPBridge {
             ensureTasklessObserver: { [weak self] in
                 await self?.ensureTasklessObserver(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID)
             },
-            claimDelegatedToolNotification: { [weak self] notificationID in
-                await self?.claimDelegatedToolNotification(
-                    notificationID, sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID
-                ) ?? false
+            completeDelegatedToolCall: { [weak self] event in
+                await self?.completeDelegatedPermissionToolCall(event, sessionID: turn.sessionID)
             }
         )
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {
@@ -85,10 +83,13 @@ extension ZenCODEACPBridge {
                     // Claim before suspending. This flag belongs to this live ACP
                     // incarnation, not to the backend conversation or its snapshot.
                     sessions[turn.sessionID]?.hasPresentedInitialConfiguration = true
+                    // The session's own message: never merged with the model's
+                    // answer, which opens a message of its own after it.
                     await Self.sendPromptUpdate(
                         Self.textChunkJSONUpdate(
                             kind: "agent_message_chunk",
-                            text: initialConfigurationSummary(for: currentSession)
+                            text: initialConfigurationSummary(for: currentSession),
+                            messageID: Self.newMessageID()
                         ),
                         through: updatePipeline
                     )
@@ -129,7 +130,11 @@ extension ZenCODEACPBridge {
             fileChangeSummary = completion.fileChangeSummary
             if case .planning = commandPurpose {
                 await Self.sendPromptUpdate(
-                    Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: completion.text),
+                    Self.textChunkJSONUpdate(
+                        kind: "agent_message_chunk",
+                        text: completion.text,
+                        messageID: Self.newMessageID()
+                    ),
                     through: updatePipeline
                 )
             }
@@ -216,7 +221,6 @@ extension ZenCODEACPBridge {
     ) async -> ACPPromptTurnPresentation {
         updateLiveSession(id: turn.sessionID, epoch: turn.epoch) { live in
             live.promptUpdatePipeline = pipeline
-            live.delegatedToolNotifications.removeAll()
         }
         // Persistent taskless agents may run during a text-only follow-up.
         await ensureTasklessObserver(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID)

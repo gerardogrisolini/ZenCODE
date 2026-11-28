@@ -71,6 +71,11 @@ public struct AgentToolAuthorizationRequest: Sendable, Equatable {
     /// coordinator's own executor never sets it, so the turn-scoped path stays
     /// exactly as strict as before.
     public let delegatedIdentity: DelegatedIdentity?
+    /// The name of the delegated agent that asks, as the runner resolved it
+    /// for presentation (the agent's id when it has no name), once the runner
+    /// named that agent in ``title`` (``namingDelegatedAgent(_:)``); `nil`
+    /// otherwise. Presentation only: nothing routes or caches on it.
+    public let delegatedAgentName: String?
 
     public init(
         turnID: UUID? = AgentToolAuthorizationContext.turnID,
@@ -81,7 +86,8 @@ public struct AgentToolAuthorizationRequest: Sendable, Equatable {
         kind: String,
         command: String,
         workingDirectory: String,
-        delegatedIdentity: DelegatedIdentity? = nil
+        delegatedIdentity: DelegatedIdentity? = nil,
+        delegatedAgentName: String? = nil
     ) {
         self.turnID = turnID
         self.sessionID = sessionID
@@ -92,6 +98,7 @@ public struct AgentToolAuthorizationRequest: Sendable, Equatable {
         self.command = command
         self.workingDirectory = workingDirectory
         self.delegatedIdentity = delegatedIdentity
+        self.delegatedAgentName = delegatedAgentName
     }
 
     /// Returns a copy that differs only in the operator-facing title.
@@ -109,8 +116,43 @@ public struct AgentToolAuthorizationRequest: Sendable, Equatable {
             kind: kind,
             command: command,
             workingDirectory: workingDirectory,
-            delegatedIdentity: delegatedIdentity
+            delegatedIdentity: delegatedIdentity,
+            delegatedAgentName: delegatedAgentName
         )
+    }
+
+    /// Returns a copy whose title names the delegated agent `name` that asks
+    /// (`[agent <name>] <title>`), as the terminal and Telegram show it, and
+    /// that keeps `name` in ``delegatedAgentName`` for a channel that shows
+    /// the agent elsewhere (``titleWithoutDelegatedAgent``). Like
+    /// ``withTitle(_:)``, nothing the runner routes on or consent caching keys
+    /// on changes.
+    public func namingDelegatedAgent(_ name: String) -> AgentToolAuthorizationRequest {
+        AgentToolAuthorizationRequest(
+            turnID: turnID,
+            sessionID: sessionID,
+            toolCallID: toolCallID,
+            toolName: toolName,
+            title: Self.delegatedAgentTitlePrefix(name) + title,
+            kind: kind,
+            command: command,
+            workingDirectory: workingDirectory,
+            delegatedIdentity: delegatedIdentity,
+            delegatedAgentName: name
+        )
+    }
+
+    /// ``title`` without the delegated agent ``namingDelegatedAgent(_:)``
+    /// named in it: the title itself when no agent was named.
+    public var titleWithoutDelegatedAgent: String {
+        guard let delegatedAgentName else { return title }
+        let prefix = Self.delegatedAgentTitlePrefix(delegatedAgentName)
+        guard title.hasPrefix(prefix) else { return title }
+        return String(title.dropFirst(prefix.count))
+    }
+
+    private static func delegatedAgentTitlePrefix(_ name: String) -> String {
+        "[agent \(name)] "
     }
 }
 

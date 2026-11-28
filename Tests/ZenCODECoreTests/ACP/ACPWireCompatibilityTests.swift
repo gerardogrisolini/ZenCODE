@@ -102,8 +102,8 @@ private func makeACPWireBridge(
     backendFactory: AgentRuntimeBackendFactory? = nil
 ) throws -> ZenCODEACPBridge {
     // A bridge that still needs its setup has no model: the hosted model list
-    // is empty, which keeps `configOptions` and `models` deterministic instead
-    // of reading the settings of the machine running the tests.
+    // is empty, which keeps the advertised models deterministic instead of
+    // reading the settings of the machine running the tests.
     let configuration = try AgentConfiguration(
         hostedModelID: "test-model",
         availableModels: setupRequired ? [] : [
@@ -327,12 +327,18 @@ extension ACPCompatibilityTests {
         let initializeResponse = try #require(transport.response(id: 1))
         #expect(initializeResponse["error"] == nil)
         let result = try #require(initializeResponse["result"] as? [String: Any])
+        #expect((result["protocolVersion"] as? NSNumber)?.intValue == 1)
+        #expect(Set(result.keys) == Set([
+            "protocolVersion",
+            "agentCapabilities",
+            "authMethods",
+            "agentInfo",
+            "_meta",
+        ]))
         let authMethods = try #require(result["authMethods"] as? [[String: Any]])
         #expect(!authMethods.isEmpty)
         #expect(authMethods.first?["id"] as? String == "zencode-setup")
-        // No model is configured yet: the lists are empty but still valid JSON.
-        let configOptions = try #require(result["configOptions"] as? [Any])
-        #expect(configOptions.isEmpty)
+        #expect(result["configOptions"] == nil)
         let models = try #require(
             (result["_meta"] as? [String: Any])?["models"] as? [String: Any]
         )
@@ -471,16 +477,25 @@ extension ACPCompatibilityTests {
             #expect(transport.errorCode(id: 1) == nil)
             let result = try #require(transport.response(id: 1)?["result"] as? [String: Any])
             #expect(result["stopReason"] as? String == "end_turn")
-            let stream = ACPSessionUpdateStream(updates: transport.sessionUpdates())
-            // The first agent message is the initial configuration summary, the
-            // second one the model reply.
+            let updates = transport.sessionUpdates()
+            let stream = ACPSessionUpdateStream(updates: updates)
+            // The prompt is not echoed (the client shows its own message). The
+            // session is titled by it, then the first agent message is the
+            // initial configuration summary, the second one the model reply.
             #expect(stream.orderedKinds == [
-                "user_message_chunk",
                 "session_info_update",
                 "available_commands_update",
                 "agent_message_chunk",
                 "agent_message_chunk",
             ])
+            #expect((updates.first { $0["sessionUpdate"] as? String == "session_info_update" })?["title"] as? String == "Hello")
+            // Each message has a `messageId`, and the two are different messages.
+            let messageIDs = updates
+                .filter { $0["sessionUpdate"] as? String == "agent_message_chunk" }
+                .map { $0["messageId"] as? String }
+            #expect(messageIDs.count == 2)
+            #expect(messageIDs.allSatisfy { $0?.isEmpty == false })
+            #expect(Set(messageIDs.compactMap { $0 }).count == 2)
             // No task graph: exactly one empty plan.
             #expect(stream.plans.count == 1)
             #expect((stream.plans.first?["entries"] as? [Any])?.isEmpty == true)

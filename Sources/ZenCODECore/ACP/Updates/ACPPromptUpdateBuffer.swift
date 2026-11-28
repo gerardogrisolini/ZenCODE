@@ -10,6 +10,11 @@ import Synchronization
 import ToolCore
 import ZenCODERuntime
 
+/// Coalesces the text chunks of a prompt turn so the wire carries fewer, larger
+/// `agent_message_chunk` updates, without ever changing what a client sees as a
+/// message: only chunks of one message (the same `messageId`, or both without
+/// one) are merged, and the merged chunk keeps that id. A chunk of another
+/// message first writes the text still pending for the previous one.
 public final class ACPPromptUpdateBuffer: Sendable {
     /// Minimal deterministic time seam. Production keeps wall-clock `Date()`;
     /// tests inject a controllable clock so window-based flush decisions can
@@ -18,6 +23,8 @@ public final class ACPPromptUpdateBuffer: Sendable {
 
     private struct State {
         var pendingContent = ""
+        /// The message the pending text belongs to.
+        var pendingMessageID: String?
         var latestUsageUpdate: JSONValue?
         var lastContentFlushAt: Date
         var lastMetadataFlushAt: Date
@@ -49,8 +56,16 @@ public final class ACPPromptUpdateBuffer: Sendable {
                       !text.isEmpty else {
                     return []
                 }
+                let messageID = object["messageId"]?.acpStringValue
+                // Never merge two messages: the text pending for another one
+                // is written first, under its own id.
+                var updates: [JSONValue] = []
+                if !state.pendingContent.isEmpty, state.pendingMessageID != messageID {
+                    updates = Self.flushContentIfNeeded(force: true, now: instant, state: &state)
+                }
+                state.pendingMessageID = messageID
                 state.pendingContent += text
-                return Self.flushContentIfNeeded(force: false, now: instant, state: &state)
+                return updates + Self.flushContentIfNeeded(force: false, now: instant, state: &state)
 
             case "usage_update":
                 state.latestUsageUpdate = update
@@ -95,16 +110,16 @@ public final class ACPPromptUpdateBuffer: Sendable {
         }
 
         let content = state.pendingContent
+        let messageID = state.pendingMessageID
         state.pendingContent.removeAll(keepingCapacity: true)
+        state.pendingMessageID = nil
         state.lastContentFlushAt = now
         return [
-            .object([
-                "sessionUpdate": .string("agent_message_chunk"),
-                "content": .object([
-                    "type": .string("text"),
-                    "text": .string(content)
-                ])
-            ])
+            ZenCODEACPBridge.textChunkJSONUpdate(
+                kind: "agent_message_chunk",
+                text: content,
+                messageID: messageID
+            )
         ]
     }
 

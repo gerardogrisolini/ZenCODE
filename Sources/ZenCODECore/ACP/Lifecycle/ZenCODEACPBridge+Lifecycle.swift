@@ -109,10 +109,15 @@ extension ZenCODEACPBridge {
             try await sessionRunner.createSession(configuration: runnerConfiguration)
             // Whether earlier sessions left task graphs to offer: only then
             // is the startup offer registered below.
-            let offersResumableTaskGraphs = await hasOfferableResumableTaskGraphs(
-                sessionID: sessionID,
-                workingDirectory: workingDirectoryURL
-            )
+            let offersResumableTaskGraphs: Bool
+            if clientSupportsFormElicitation {
+                offersResumableTaskGraphs = await hasOfferableResumableTaskGraphs(
+                    sessionID: sessionID,
+                    workingDirectory: workingDirectoryURL
+                )
+            } else {
+                offersResumableTaskGraphs = false
+            }
             // `createSession` and the scan suspend: if a shutdown or a
             // `session/close` landed during them, close the runner session we
             // just created instead of announcing it.
@@ -133,12 +138,13 @@ extension ZenCODEACPBridge {
             : nil
         await writer.sendResultIfRequest(
             id: id,
-            result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
+            result: JSONValue.acpValue(from: sessionLifecycleResult(
+                sessionID: sessionID,
+                includeSessionID: true
+            ))
         )
-        await sendSessionInfoUpdate(
-            sessionID: sessionID,
-            title: URL(fileURLWithPath: cwd).lastPathComponent
-        )
+        // No placeholder title: a new session is titled by its first prompt
+        // (see `presentSessionTitleIfNeeded`).
         await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
         // The incarnation's observer publishes the plan of every graph change
         // the prompts do not own (see `ACPTaskGraphObserver.swift`). It starts
@@ -212,6 +218,7 @@ extension ZenCODEACPBridge {
         baseAllowedToolNames: Set<String>? = nil,
         savedSessionLink: ACPSavedSessionLink? = nil,
         promptDisplayTexts: [String: String] = [:],
+        sessionTitle: String? = nil,
         operation: UInt64
     ) throws {
         try ensureLifecycleOperationLive(operation)
@@ -223,6 +230,7 @@ extension ZenCODEACPBridge {
         )
         sessionEntry.savedSessionLink = savedSessionLink
         sessionEntry.promptDisplayTexts = promptDisplayTexts
+        sessionEntry.sessionTitle = sessionTitle
         sessions[sessionID] = sessionEntry
         bindLifecycleOperation(operation, sessionID: sessionID, epoch: incarnation.epoch)
     }
@@ -329,7 +337,10 @@ extension ZenCODEACPBridge {
             try ensureLifecycleOperationLive(operation)
             await writer.sendResultIfRequest(
                 id: id,
-                result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
+                result: JSONValue.acpValue(from: sessionLifecycleResult(
+                    sessionID: sessionID,
+                    includeSessionID: false
+                ))
             )
             // The reply is written, so a close or shutdown that lands now owes
             // it nothing: a second response for the same id is never written,
@@ -337,10 +348,11 @@ extension ZenCODEACPBridge {
             guard isLifecycleOperationLive(operation) else {
                 return
             }
-            await sendSessionInfoUpdate(
-                sessionID: sessionID,
-                title: URL(fileURLWithPath: session.cwd).lastPathComponent
-            )
+            // The title the session already has, once more for this restore;
+            // a session without one is titled by its next prompt.
+            if let title = liveSession(id: sessionID, epoch: session.epoch)?.sessionTitle {
+                await sendSessionInfoUpdate(sessionID: sessionID, title: title)
+            }
             // A restore of a live id is a new presentation boundary: the plan
             // the client shows again is the graph's, whatever this incarnation
             // had presented before.
@@ -383,7 +395,7 @@ extension ZenCODEACPBridge {
             savedAgentName: savedSession?.agentName
         )
         try ensureLifecycleOperationLive(operation)
-        let restoredSessionEpoch = try await withNewIncarnation(
+        let (restoredSessionEpoch, restoredTitle) = try await withNewIncarnation(
             sessionID: sessionID,
             cwd: workingDirectory.path,
             params: params,
@@ -399,6 +411,15 @@ extension ZenCODEACPBridge {
             )
             let configuration = restored.configuration
             try ensureLifecycleOperationLive(operation)
+            // The title the restored session keeps: its saved name, else the
+            // one its first prompt gives. Set with the entry, so a prompt sent
+            // right after the reply never renames the session.
+            let promptDisplayTexts = savedSession.map(Self.promptDisplayTexts(restoring:)) ?? [:]
+            let title = Self.restoredSessionTitle(
+                savedName: savedSession?.name,
+                history: configuration.history,
+                displayTexts: promptDisplayTexts
+            )
             // Past the last fence the session entry, the runner session, the
             // history replay and the reply become observable. The saved
             // session the incarnation was restored from is the one its saves
@@ -416,7 +437,8 @@ extension ZenCODEACPBridge {
                         checkpointTree: $0.checkpointTree
                     )
                 },
-                promptDisplayTexts: savedSession.map(Self.promptDisplayTexts(restoring:)) ?? [:],
+                promptDisplayTexts: promptDisplayTexts,
+                sessionTitle: title,
                 operation: operation
             )
             try await sessionRunner.restoreSession(configuration: configuration)
@@ -441,13 +463,16 @@ extension ZenCODEACPBridge {
                 )
                 try ensureLifecycleOperationLive(operation)
             }
-            return incarnation.epoch
+            return (incarnation.epoch, title)
         }
         try ensureLifecycleOperationLive(operation)
 
         await writer.sendResultIfRequest(
             id: id,
-            result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
+            result: JSONValue.acpValue(from: sessionLifecycleResult(
+                sessionID: sessionID,
+                includeSessionID: false
+            ))
         )
         // The reply is written: as in the restore of a live id, a close or
         // shutdown that lands now writes no second response for this request
@@ -455,10 +480,9 @@ extension ZenCODEACPBridge {
         guard isLifecycleOperationLive(operation) else {
             return
         }
-        await sendSessionInfoUpdate(
-            sessionID: sessionID,
-            title: workingDirectory.lastPathComponent
-        )
+        if let restoredTitle {
+            await sendSessionInfoUpdate(sessionID: sessionID, title: restoredTitle)
+        }
         await publishAvailableCommands(sessionID: sessionID, epoch: restoredSessionEpoch)
         // Started after the reply, as in `session/new`: the session exists for
         // the client before its first `plan`, and a graph restored with the
@@ -588,13 +612,22 @@ extension ZenCODEACPBridge {
         ), baseAllowedToolNames)
     }
 
-    public func sessionLifecycleResult(sessionID: String) -> [String: Any] {
+    public func sessionLifecycleResult(
+        sessionID: String,
+        includeSessionID: Bool = true
+    ) -> [String: Any] {
         let session = sessions[sessionID]
         let sessionConfiguration = session?.configuration
         let modelID = sessionConfiguration?.modelID
             ?? defaultSessionModelID()
+        var meta: [String: Any] = [
+            "models": modelState(for: modelID)
+        ]
+        if let selectedAgent = session?.selectedAgent {
+            meta["agentId"] = selectedAgent.id
+            meta["agentName"] = selectedAgent.name
+        }
         var result: [String: Any] = [
-            "sessionId": sessionID,
             "modes": [
                 "availableModes": [
                     [
@@ -614,13 +647,10 @@ extension ZenCODEACPBridge {
                 for: modelID,
                 thinkingSelection: sessionConfiguration?.thinkingSelection
             ),
-            "_meta": [
-                "models": modelState(for: modelID)
-            ]
+            "_meta": meta
         ]
-        if let selectedAgent = session?.selectedAgent {
-            result["agentId"] = selectedAgent.id
-            result["agentName"] = selectedAgent.name
+        if includeSessionID {
+            result["sessionId"] = sessionID
         }
         return result
     }

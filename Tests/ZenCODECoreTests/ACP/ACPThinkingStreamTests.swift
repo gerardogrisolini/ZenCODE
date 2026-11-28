@@ -453,8 +453,10 @@ struct ACPThinkingStreamTests {
         #expect(thinkingOption["currentValue"]?.acpStringValue == "medium")
     }
 
+    /// The session `session/new` announced last, by the commands it published
+    /// (the session has no title until its first prompt).
     private static func lastCreatedSessionID(in wire: ACPThinkingWire) -> String {
-        wire.sessionIDs(forUpdateKind: "session_info_update").last
+        wire.sessionIDs(forUpdateKind: "available_commands_update").last
             ?? "acp-thinking-selection"
     }
 

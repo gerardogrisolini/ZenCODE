@@ -59,7 +59,12 @@ public actor ZenCODEACPBridge {
         var hasPresentedInitialConfiguration = false
         var presentedCommands: JSONValue?
         var promptUpdatePipeline: ACPPromptUpdatePipeline?
-        var delegatedToolNotifications = Set<String>()
+        /// The delegated tool calls (`acp:tool:<agent>:<call>`) a permission
+        /// request announced with a `tool_call` and that still owe the client
+        /// their final state (see `ACPDelegatedPermissionToolCalls.swift`).
+        /// The incarnation's, not a prompt's: a permission can be asked, and
+        /// its tool complete, outside the prompt that was running.
+        var delegatedPermissionToolCalls = Set<String>()
         var tasklessObserver: Task<Void, Never>?
         /// The incarnation's observer of the session's task-graph events: it
         /// publishes the plan of a graph that changes while no prompt owns the
@@ -84,6 +89,12 @@ public actor ZenCODEACPBridge {
         /// presentation: the model and the history keep the whole prompt (see
         /// `ZenCODEACPBridge+SessionPersistence.swift`).
         var promptDisplayTexts: [String: String] = [:]
+        /// The title the client holds for the session (`session_info_update`):
+        /// `nil` until the session has one. It is born once: from the first
+        /// prompt of the conversation, or, in a restored session, from the saved
+        /// name or the first prompt of its history. It never changes after that
+        /// (see ``ZenCODEACPBridge/presentSessionTitleIfNeeded(fromPrompt:sessionID:epoch:)``).
+        var sessionTitle: String? = nil
         /// The session's shared chat controller: it runs the prompt turns and
         /// owns the `/plan` and `/goal` command state of this incarnation. A
         /// same-epoch reconstruction keeps it; a new epoch gets a fresh one
@@ -128,6 +139,8 @@ public actor ZenCODEACPBridge {
     /// after the setup the client reconnects to a fresh process.
     let setupRequired: Bool
     var clientFileSystem: ACPClientFileSystem?
+    /// Explicit form elicitation support advertised by initialize.
+    var clientSupportsFormElicitation = false
     /// The container every ACP session runs in: one slot per session, whose
     /// incarnation owns the controller, the epoch, and the prompt
     /// reservation (see ``ChatSessionHost``). The host also owns the runner,
@@ -272,7 +285,7 @@ public actor ZenCODEACPBridge {
         let drainWaiters = promptHandlerDrainWaiters
         promptHandlerDrainWaiters.removeAll()
         // Withdraw every startup offer of old task graphs: its pending
-        // `session/request_permission` returns (cancelled), so the offer ends
+        // `elicitation/create` returns (cancelled), so the offer ends
         // as Start fresh and the prompts waiting for it wake up fenced.
         let taskGraphOffers = cancelAllResumableTaskGraphOffers()
         let sessionIDs = Array(sessions.keys)
@@ -503,12 +516,22 @@ public actor ZenCODEACPBridge {
     /// state; the slot's hooks compose the turns of its Telegram channel as
     /// the editor's prompts (``ACPSessionChannelHooks``). A host that shut
     /// down meanwhile fences the handler.
+    ///
+    /// The session's consent host announces the delegated tool calls it asks
+    /// a permission for, and its default presenter, which presents what
+    /// happens while no prompt does, closes the rows of those calls (see
+    /// `ACPDelegatedPermissionToolCalls.swift`).
     func openACPSession(sessionID: String, cwd: String) async throws -> ChatSessionIncarnation {
         let descriptor = ChatSlotDescriptor(
             identity: .acpSession(sessionID),
             workingDirectory: URL(fileURLWithPath: cwd),
-            presenter: ACPSilentPresenter(),
-            interaction: .host(ACPConsentHost(writer: writer)),
+            presenter: ACPSilentPresenter(completeDelegatedToolCall: { [weak self] event in
+                await self?.completeDelegatedPermissionToolCall(event, sessionID: sessionID)
+            }),
+            interaction: .host(ACPConsentHost(
+                writer: writer,
+                delegatedPresentation: delegatedPermissionPresentation()
+            )),
             authorizer: permissionBroker.consentAuthorizer,
             channelHooks: slotChannelHooks,
             retainsTranscript: false,

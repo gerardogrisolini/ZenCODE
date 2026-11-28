@@ -54,6 +54,23 @@ private final class ACPRoundTripWire: Sendable {
         }
     }
 
+    /// The `session/update` payloads of `kind`, in delivery order.
+    func updates(kind: String) -> [[String: JSONValue]] {
+        messages.compactMap { message in
+            guard message["method"]?.acpStringValue == "session/update",
+                  let update = message["params"]?.objectValue?["update"]?.objectValue,
+                  update["sessionUpdate"]?.acpStringValue == kind else {
+                return nil
+            }
+            return update
+        }
+    }
+
+    /// The `title` of every `session_info_update`, in delivery order.
+    func sessionTitles() -> [String] {
+        updates(kind: "session_info_update").compactMap { $0["title"]?.acpStringValue }
+    }
+
     func sessionIDs(forMethod method: String) -> [String] {
         messages.compactMap { message in
             guard message["method"]?.acpStringValue == method else {
@@ -234,14 +251,23 @@ struct ACPChatRoundTripTests {
 
         // Inbound: the prompt reached the shared session runner unchanged.
         #expect(await fixture.backend.recordedPrompts() == ["ping from client"])
-        // Outbound: the client sees its own message, the configuration summary, and the reply.
-        #expect(fixture.wire.updateTexts(kind: "user_message_chunk")
-            == ["ping from client"])
+        // Outbound: the client shows its own message itself, so the agent
+        // writes no echo of it; it sends the configuration summary and the reply.
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
         #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
             == [
                 "Agent: Default · Model: test-model · Thinking: Not supported\n\n",
                 "echo: ping from client"
             ])
+        // Every chunk names its message, and the summary is a message of its
+        // own: never the id of the model's reply.
+        let messageIDs = fixture.wire.updates(kind: "agent_message_chunk")
+            .map { $0["messageId"]?.acpStringValue }
+        #expect(messageIDs.count == 2)
+        #expect(messageIDs.allSatisfy { $0?.isEmpty == false })
+        #expect(Set(messageIDs).count == 2)
+        // The session is named after its first prompt, once.
+        #expect(fixture.wire.sessionTitles() == ["ping from client"])
         // The request is answered, and answered for the right session.
         #expect(fixture.wire.hasError(for: 7) == false)
         #expect(fixture.wire.stopReason(for: 7) == "end_turn")
@@ -284,6 +310,12 @@ struct ACPChatRoundTripTests {
                 "Agent: Default · Model: test-model · Thinking: Not supported\n\n",
                 "echo: ordering"
             ])
+        // The buffer never merges two messages: the summary and the reply keep
+        // the ids of their own.
+        let ids = fixture.wire.updates(kind: "agent_message_chunk")
+            .compactMap { $0["messageId"]?.acpStringValue }
+        #expect(ids.count == 2)
+        #expect(Set(ids).count == 2)
 
         let trace = fixture.wire.trace()
         let replyIndex = try #require(trace.lastIndex(of: "agent_message_chunk"))
@@ -350,6 +382,76 @@ struct ACPChatRoundTripTests {
             // One backend, built for the configured model, served both prompts.
             #expect(builds.modelIDs == ["test-model"])
             #expect(await bridge.sessionConfigurationsForTesting().map(\.modelID) == ["test-model"])
+            await bridge.shutdown()
+        }
+    }
+
+    /// The wire of a session with two prompts, from `session/new`: no
+    /// placeholder title at creation, the first prompt names the session after
+    /// itself (its first line), the second prompt leaves the title as it is
+    /// (one `session_info_update` for the one title), and no prompt is echoed
+    /// back as a `user_message_chunk`. Every message of the turns, the
+    /// configuration summary and the reply of each prompt, has an id of its
+    /// own.
+    @Test
+    func theSessionIsTitledByItsFirstPromptOnlyAndNoPromptIsEchoed() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-round-trip-title-\(UUID().uuidString)", isDirectory: true)
+        let supportDirectory = root.appendingPathComponent("support", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let backend = EchoACPBackend()
+        let wire = ACPRoundTripWire()
+        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) {
+            let bridge = ZenCODEACPBridge(
+                configuration: try Self.hostedConfiguration(workingDirectory: workspace),
+                writer: ACPWriter(sink: wire.sink),
+                backendFactory: { _, _ in backend }
+            )
+            try await bridge.newSession(id: nil, params: ["cwd": workspace.path])
+            let sessionID = try #require(
+                await bridge.sessionConfigurationsForTesting().first?.sessionID
+            )
+            // The session exists, and nothing names it yet: no folder name.
+            #expect(wire.sessionTitles().isEmpty)
+
+            await bridge.handleLine("""
+            {"jsonrpc":"2.0","id":31,"method":"session/prompt","params":{"sessionId":"\
+            \(sessionID)","prompt":[{"type":"text","text":"Explain the parser\\nin detail"}]}}
+            """)
+            #expect(wire.sessionTitles() == ["Explain the parser"])
+
+            await bridge.handleLine("""
+            {"jsonrpc":"2.0","id":32,"method":"session/prompt","params":{"sessionId":"\
+            \(sessionID)","prompt":[{"type":"text","text":"And the lexer?"}]}}
+            """)
+
+            #expect(wire.stopReason(for: 31) == "end_turn")
+            #expect(wire.stopReason(for: 32) == "end_turn")
+            // The title did not change with the second prompt.
+            #expect(wire.sessionTitles() == ["Explain the parser"])
+            let trace = wire.trace()
+            #expect(trace.filter { $0 == "session_info_update" }.count == 1)
+            #expect(trace.filter { $0 == "user_message_chunk" }.isEmpty)
+            // The title comes with the first prompt, after the session was announced.
+            let titleIndex = try #require(trace.firstIndex(of: "session_info_update"))
+            let commandsIndex = try #require(trace.firstIndex(of: "available_commands_update"))
+            #expect(commandsIndex < titleIndex)
+
+            let chunks = wire.updates(kind: "agent_message_chunk")
+            let texts = wire.updateTexts(kind: "agent_message_chunk")
+            #expect(texts.count == 3)
+            #expect(texts.first?.hasPrefix("Agent: ") == true)
+            #expect(Array(texts.dropFirst()) == [
+                "echo: Explain the parser\nin detail",
+                "echo: And the lexer?",
+            ])
+            let messageIDs = chunks.compactMap { $0["messageId"]?.acpStringValue }
+            #expect(messageIDs.count == 3)
+            #expect(Set(messageIDs).count == 3)
             await bridge.shutdown()
         }
     }

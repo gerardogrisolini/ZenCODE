@@ -2,19 +2,8 @@
 //  ACPResumeTaskGraphOfferTests.swift
 //  ZenCODE
 //
-//  The startup offer of the task graphs earlier sessions left incomplete, in
-//  a new ACP session: without any (or with only the graph of another live
-//  session) nothing is registered or asked; otherwise, once `session/new`
-//  answered, the client is asked with
-//  one `session/request_permission` on a synthetic tool call (one option per
-//  menu item, the kinds mapped from the offer's stable choice IDs), which is
-//  completed once answered; Resume moves the graph into the new session and
-//  the notice reaches the editor as an `agent_message_chunk`; a cancelled
-//  answer or Start fresh leaves the checkpoint unchanged, Delete all removes
-//  every listed graph; a `session/prompt` waits for the answer, and a
-//  `session/cancel` meanwhile ends it as `cancelled`; `session/close` and the
-//  shutdown withdraw the question. Nothing reaches the network; every test
-//  runs in a UUID support directory.
+//  Session-scoped form elicitation for recovering incomplete task graphs.
+//  Tests cover capability negotiation, explicit choices, and teardown.
 //
 
 import Foundation
@@ -25,7 +14,7 @@ import ToolCore
 
 @Suite(.serialized, .timeLimit(.minutes(2)))
 struct ACPResumeTaskGraphOfferTests {
-    /// The title of the offer's menu, the synthetic tool call's title.
+    /// The title of the offer's menu.
     private static let menuTitle = "Open tasks from previous sessions"
     /// The update time of the seeded graph.
     private static let seededDate = Date(timeIntervalSince1970: 1_000)
@@ -96,7 +85,11 @@ struct ACPResumeTaskGraphOfferTests {
 
         /// Sends `session/new` in ``workspace`` as request `id` and returns
         /// the new session's id once the bridge answered it.
-        func newSession(id: Int) async throws -> String {
+        func newSession(id: Int, capabilities: sending [String: Any] = ["elicitation": ["form": [:]]]) async throws -> String {
+            await bridge.handleMessage([
+                "jsonrpc": "2.0", "id": -100, "method": "initialize",
+                "params": ["protocolVersion": 1, "clientCapabilities": capabilities],
+            ])
             await bridge.handleMessage([
                 "jsonrpc": "2.0",
                 "id": id,
@@ -134,12 +127,12 @@ struct ACPResumeTaskGraphOfferTests {
             ])
         }
 
-        /// The first `session/request_permission` the bridge wrote, once it
+        /// The first `elicitation/create` the bridge wrote, once it
         /// did, with its index on the wire.
-        func permissionRequest() async -> (index: Int, message: [String: JSONValue])? {
-            await ACPTelegramTestSupport.waitUntil { !wire.permissionRequestIDs.isEmpty }
+        func elicitationRequest() async -> (index: Int, message: [String: JSONValue])? {
+            await ACPTelegramTestSupport.waitUntil { wire.messages.contains { $0["method"]?.acpStringValue == "elicitation/create" } }
             guard let index = wire.messages.firstIndex(where: {
-                $0["method"]?.acpStringValue == "session/request_permission"
+                $0["method"]?.acpStringValue == "elicitation/create"
             }) else {
                 return nil
             }
@@ -149,13 +142,13 @@ struct ACPResumeTaskGraphOfferTests {
         /// Answers the client's side of the request `message` with `outcome`.
         func answer(_ message: [String: JSONValue], outcome: sending [String: Any]) async throws {
             guard case let .number(requestID)? = message["id"] else {
-                Issue.record("The permission request has no numeric id: \(message)")
+                Issue.record("The elicitation request has no numeric id: \(message)")
                 return
             }
             await bridge.handleMessage([
                 "jsonrpc": "2.0",
                 "id": Int(requestID),
-                "result": ["outcome": outcome],
+                "result": outcome,
             ])
         }
 
@@ -170,14 +163,6 @@ struct ACPResumeTaskGraphOfferTests {
         func waitForPromptsAwaitingTheOffer(_ count: Int) async -> Bool {
             await ACPTelegramTestSupport.waitUntil {
                 await bridge.promptsAwaitingResumableTaskGraphOfferCountForTesting() == count
-            }
-        }
-
-        /// The `tool_call_update`s written for `toolCallID`.
-        func toolCallUpdates(_ toolCallID: String) -> [[String: JSONValue]] {
-            wire.sessionUpdates().filter {
-                $0["sessionUpdate"]?.acpStringValue == "tool_call_update"
-                    && $0["toolCallId"]?.acpStringValue == toolCallID
             }
         }
 
@@ -235,62 +220,78 @@ struct ACPResumeTaskGraphOfferTests {
 
     // MARK: - The question
 
-    /// After the `session/new` reply and its announcements, the client is
-    /// asked with the expected options and synthetic tool call; Resume moves
-    /// the graph into the new session, completes the tool call, and the
-    /// notice reaches the editor.
+    /// The notices of one offer are one message: their chunks share a
+    /// `messageId`, which is not the id of any other message of the session.
+    @Test
+    func theNoticesOfOneOfferAreOneMessageWithItsOwnID() async throws {
+        try await Self.withFixture { fixture in
+            let sessionID = try await fixture.newSession(id: 1)
+            let epoch = await fixture.bridge.sessionEpochForTesting(sessionID: sessionID)
+            let notices: [ChatSessionNotice] = [
+                .taskGraphResumed(graphID: "old-work", pendingTaskCount: 2, isWorkflow: false),
+                .oldTaskGraphsDeleted(count: 1),
+            ]
+            await fixture.bridge.presentResumableTaskGraphNotices(notices, sessionID: sessionID, epoch: epoch)
+            await fixture.bridge.presentResumableTaskGraphNotices(notices, sessionID: sessionID, epoch: epoch)
+
+            let chunks = fixture.wire.sessionUpdates().filter {
+                $0["sessionUpdate"]?.acpStringValue == "agent_message_chunk"
+            }
+            #expect(chunks.count == 4)
+            let ids = chunks.map { $0["messageId"]?.acpStringValue }
+            #expect(ids.allSatisfy { $0?.isEmpty == false })
+            // One offer, one message; another offer, another message.
+            #expect(ids[0] == ids[1])
+            #expect(ids[2] == ids[3])
+            #expect(ids[0] != ids[2])
+            // The text stays readable for a client that ignores the id.
+            let texts = chunks.compactMap { $0["content"]?.objectValue?["text"]?.acpStringValue }
+            #expect(texts[0] == Self.text(of: notices[0]))
+            #expect(texts[1] == "\n\n" + Self.text(of: notices[1]))
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// The form follows the session announcements and Resume moves the graph.
     @Test
     func resumeMovesTheGraphIntoTheNewSessionAndPresentsTheNotice() async throws {
         try await Self.withFixture { fixture in
             try fixture.seedEarlierSessionCheckpoint()
             let sessionID = try await fixture.newSession(id: 1)
-            let (requestIndex, request) = try #require(await fixture.permissionRequest())
+            let (requestIndex, request) = try #require(await fixture.elicitationRequest())
 
-            // Asked after the reply, the session info, and the commands.
+            // Asked after the reply and the commands (the session has no
+            // title yet: the first prompt names it).
             let replyIndex = try #require(fixture.responseIndex(id: 1))
-            let infoIndex = try #require(fixture.updateIndex(sessionID: sessionID) {
-                $0["sessionUpdate"]?.acpStringValue == "session_info_update"
-            })
             let commandsIndex = try #require(fixture.updateIndex(sessionID: sessionID) {
                 $0["sessionUpdate"]?.acpStringValue == "available_commands_update"
             })
-            #expect(replyIndex < infoIndex && infoIndex < commandsIndex && commandsIndex < requestIndex)
+            #expect(fixture.updateIndex(sessionID: sessionID) {
+                $0["sessionUpdate"]?.acpStringValue == "session_info_update"
+            } == nil)
+            #expect(replyIndex < commandsIndex && commandsIndex < requestIndex)
 
             let params = try #require(request["params"]?.objectValue)
             #expect(params["sessionId"]?.acpStringValue == sessionID)
-            let toolCall = try #require(params["toolCall"]?.objectValue)
-            let toolCallID = try #require(toolCall["toolCallId"]?.acpStringValue)
-            #expect(toolCallID.hasPrefix("zencode:resume-task-graphs:"))
-            #expect(toolCall["status"]?.acpStringValue == "pending")
-            #expect(toolCall["title"]?.acpStringValue == Self.menuTitle)
-            #expect(toolCall["kind"]?.acpStringValue == "other")
+            #expect(params["mode"]?.acpStringValue == "form")
+            #expect(params["message"]?.acpStringValue == Self.menuTitle)
+            #expect(params["toolCallId"] == nil && params["toolCall"] == nil)
+            let schema = try #require(params["requestedSchema"]?.objectValue)
+            #expect(schema["type"]?.acpStringValue == "object")
+            #expect(schema["required"]?.arrayValue == [.string("choice")])
+            let choice = try #require(schema["properties"]?.objectValue?["choice"]?.objectValue)
+            #expect(choice["type"]?.acpStringValue == "string")
+            let options = try #require(choice["oneOf"]?.arrayValue).compactMap(\.objectValue)
             let detail = "2 of 3 tasks pending · updated \(ChatSessionNoticeText.timestampText(Self.seededDate))"
-            let content = try #require(toolCall["content"]?.arrayValue)
-            #expect(content.count == 1)
-            let block = try #require(content.first?.objectValue)
-            #expect(block["type"]?.acpStringValue == "content")
-            #expect(block["content"]?.objectValue?["type"]?.acpStringValue == "text")
-            #expect(block["content"]?.objectValue?["text"]?.acpStringValue == """
-                Resume
-                old-work — \(detail)
-
-                Other actions
-                Delete all old tasks — delete every task graph listed above
-                Start fresh — leave saved tasks unchanged
-                """)
-            let options = try #require(params["options"]?.arrayValue).compactMap(\.objectValue)
-            #expect(options.map { $0["optionId"]?.acpStringValue } == [
+            #expect(options.map { $0["const"]?.acpStringValue } == [
                 "resume:old-session/old-work", "delete", "fresh",
             ])
-            #expect(options.map { $0["name"]?.acpStringValue } == [
+            #expect(options.map { $0["title"]?.acpStringValue } == [
                 "Resume old-work (\(detail))", "Delete all old tasks", "Start fresh",
-            ])
-            #expect(options.map { $0["kind"]?.acpStringValue } == [
-                "allow_once", "reject_always", "reject_once",
             ])
 
             try await fixture.answer(request, outcome: [
-                "outcome": "selected", "optionId": "resume:old-session/old-work",
+                "action": "accept", "content": ["choice": "resume:old-session/old-work"],
             ])
             #expect(await fixture.waitForTheOfferToEnd(sessionID: sessionID))
 
@@ -300,44 +301,141 @@ struct ACPResumeTaskGraphOfferTests {
                 .currentGraphID == "old-work")
             #expect(try fixture.earlierSessionGraphIDs() == nil)
 
-            // The tool call is completed, then the notice follows.
-            let completions = fixture.toolCallUpdates(toolCallID)
-            #expect(completions.count == 1)
-            #expect(completions.first?["status"]?.acpStringValue == "completed")
+            // The notice follows, without a synthetic tool call.
             let resumedText = Self.text(of: .taskGraphResumed(
                 graphID: "old-work", pendingTaskCount: 2, isWorkflow: false
             ))
             #expect(fixture.wire.updateTexts(kind: "agent_message_chunk", from: requestIndex) == [resumedText])
-            let completionIndex = try #require(fixture.updateIndex(sessionID: sessionID) {
-                $0["sessionUpdate"]?.acpStringValue == "tool_call_update"
-                    && $0["toolCallId"]?.acpStringValue == toolCallID
-            })
-            let noticeIndex = try #require(fixture.updateIndex(sessionID: sessionID) {
+            let noticeMessageID = fixture.wire.sessionUpdates().first {
                 $0["sessionUpdate"]?.acpStringValue == "agent_message_chunk"
+            }?["messageId"]?.acpStringValue
+            #expect(noticeMessageID?.isEmpty == false)
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+            #expect(fixture.wire.sessionUpdates().allSatisfy {
+                $0["sessionUpdate"]?.acpStringValue != "tool_call"
+                    && $0["sessionUpdate"]?.acpStringValue != "tool_call_update"
             })
-            #expect(completionIndex < noticeIndex)
-            #expect(fixture.wire.permissionRequestIDs.count == 1)
             await fixture.bridge.shutdown()
         }
     }
 
-    /// Delete all old tasks (`reject_always`) deletes every listed graph and
+    /// Explicitly choosing Delete all old tasks deletes every listed graph and
     /// presents the deletion; with nothing left, nothing more is asked.
     @Test
-    func rejectAlwaysDeletesEveryListedGraphAndPresentsTheDeletion() async throws {
+    func explicitDeleteRemovesEveryListedGraphAndPresentsTheDeletion() async throws {
         try await Self.withFixture { fixture in
             try fixture.seedEarlierSessionCheckpoint()
             let sessionID = try await fixture.newSession(id: 1)
-            let (requestIndex, request) = try #require(await fixture.permissionRequest())
+            let (requestIndex, request) = try #require(await fixture.elicitationRequest())
 
-            try await fixture.answer(request, outcome: ["outcome": "selected", "optionId": "delete"])
+            try await fixture.answer(request, outcome: ["action": "accept", "content": ["choice": "delete"]])
             #expect(await fixture.waitForTheOfferToEnd(sessionID: sessionID))
 
             #expect(try fixture.earlierSessionGraphIDs()?.contains("old-work") != true)
             #expect(try fixture.store.load(sessionID: sessionID, workingDirectory: fixture.workspace) == nil)
             #expect(fixture.wire.updateTexts(kind: "agent_message_chunk", from: requestIndex)
                 == [Self.text(of: .oldTaskGraphsDeleted(count: 1))])
-            #expect(fixture.wire.permissionRequestIDs.count == 1)
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test(arguments: [
+        [String: String](), ["form": "missing"], ["form": "null"], ["form": "boolean"],
+    ])
+    func withoutExplicitFormCapabilityNoOfferIsRegistered(_ variant: [String: String]) async throws {
+        try await Self.withFixture { fixture in
+            try fixture.seedEarlierSessionCheckpoint()
+            let capabilities: [String: Any]
+            switch variant["form"] {
+            case "missing": capabilities = ["elicitation": [:]]
+            case "null": capabilities = ["elicitation": ["form": NSNull()]]
+            case "boolean": capabilities = ["elicitation": ["form": true]]
+            default: capabilities = [:]
+            }
+            let sessionID = try await fixture.newSession(id: 1, capabilities: capabilities)
+            #expect(await !fixture.bridge.hasResumableTaskGraphOfferForTesting(sessionID: sessionID))
+            await fixture.startPrompt("Hello", id: 2, sessionID: sessionID).value
+            #expect(fixture.wire.stopReason(id: 2) == "end_turn")
+            #expect(!fixture.wire.messages.contains { $0["method"]?.acpStringValue == "elicitation/create" })
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+            #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test(arguments: ["decline", "cancel", "invalid", "missing", "fresh"])
+    func nonDestructiveAnswersLeaveCheckpointUntouched(_ answer: String) async throws {
+        try await Self.withFixture { fixture in
+            try fixture.seedEarlierSessionCheckpoint()
+            let sessionID = try await fixture.newSession(id: 1)
+            let (_, request) = try #require(await fixture.elicitationRequest())
+            let response: [String: Any]
+            switch answer {
+            case "decline", "cancel": response = ["action": answer, "content": ["choice": "delete"]]
+            case "invalid": response = ["action": "accept", "content": ["choice": "not-offered"]]
+            case "missing": response = ["action": "accept"]
+            default: response = ["action": "accept", "content": ["choice": "fresh"]]
+            }
+            try await fixture.answer(request, outcome: response)
+            #expect(await fixture.waitForTheOfferToEnd(sessionID: sessionID))
+            #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
+            #expect(fixture.wire.permissionRequestIDs.isEmpty)
+            #expect(fixture.wire.sessionUpdates().allSatisfy {
+                $0["sessionUpdate"]?.acpStringValue != "tool_call"
+                    && $0["sessionUpdate"]?.acpStringValue != "tool_call_update"
+            })
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test
+    func hostWithoutFormDoesNotAdvertiseSingleChoice() async throws {
+        try await Self.withFixture { fixture in
+            let host = ACPResumableTaskGraphChoiceHost(
+                writer: ACPWriter(sink: fixture.wire.sink), sessionID: "test", supportsForm: false
+            )
+            #expect(!host.capabilities.contains(.singleChoice))
+            #expect(await host.chooseOne(title: "test", items: [], selectedID: nil) == nil)
+            #expect(fixture.wire.messages.isEmpty)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test
+    func elicitationErrorLeavesCheckpointUntouched() async throws {
+        try await Self.withFixture { fixture in
+            try fixture.seedEarlierSessionCheckpoint()
+            let sessionID = try await fixture.newSession(id: 1)
+            let (_, request) = try #require(await fixture.elicitationRequest())
+            guard case let .number(requestID)? = request["id"] else {
+                Issue.record("Missing elicitation request id")
+                return
+            }
+            await fixture.bridge.handleMessage([
+                "jsonrpc": "2.0", "id": Int(requestID),
+                "error": ["code": -32603, "message": "client error"],
+            ])
+            #expect(await fixture.waitForTheOfferToEnd(sessionID: sessionID))
+            #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    @Test
+    func cancelDuringOfferCancelsWaitingPromptWithoutDeleting() async throws {
+        try await Self.withFixture { fixture in
+            try fixture.seedEarlierSessionCheckpoint()
+            let sessionID = try await fixture.newSession(id: 1)
+            let (_, request) = try #require(await fixture.elicitationRequest())
+            let prompt = fixture.startPrompt("Hello", id: 2, sessionID: sessionID)
+            #expect(await fixture.waitForPromptsAwaitingTheOffer(1))
+            await fixture.send("session/cancel", id: 3, sessionID: sessionID)
+            try await fixture.answer(request, outcome: ["action": "cancel"])
+            await prompt.value
+            #expect(fixture.wire.stopReason(id: 2) == "cancelled")
+            #expect(await fixture.backend.prompts.isEmpty)
+            #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
             await fixture.bridge.shutdown()
         }
     }
@@ -352,10 +450,7 @@ struct ACPResumeTaskGraphOfferTests {
         try await Self.withFixture { fixture in
             try fixture.seedEarlierSessionCheckpoint()
             let sessionID = try await fixture.newSession(id: 1)
-            let (requestIndex, request) = try #require(await fixture.permissionRequest())
-            let toolCallID = try #require(
-                request["params"]?.objectValue?["toolCall"]?.objectValue?["toolCallId"]?.acpStringValue
-            )
+            let (requestIndex, request) = try #require(await fixture.elicitationRequest())
             let prompt = fixture.startPrompt("Hello", id: 2, sessionID: sessionID)
             #expect(await fixture.waitForPromptsAwaitingTheOffer(1))
 
@@ -369,14 +464,16 @@ struct ACPResumeTaskGraphOfferTests {
             #expect(promptReplyIndex < closeReplyIndex)
             #expect(await !fixture.bridge.hasResumableTaskGraphOfferForTesting(sessionID: sessionID))
             #expect(await fixture.backend.prompts.isEmpty)
-            #expect(fixture.toolCallUpdates(toolCallID).isEmpty)
+            #expect(fixture.wire.sessionUpdates().allSatisfy {
+                $0["sessionUpdate"]?.acpStringValue != "tool_call_update"
+            })
             #expect(fixture.wire.updateTexts(kind: "agent_message_chunk", from: requestIndex).isEmpty)
             #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
 
             // A late answer to the withdrawn question changes nothing.
             let countAfterClose = fixture.wire.count
             try await fixture.answer(request, outcome: [
-                "outcome": "selected", "optionId": "resume:old-session/old-work",
+                "action": "accept", "content": ["choice": "resume:old-session/old-work"],
             ])
             #expect(fixture.wire.count == countAfterClose)
             #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
@@ -391,7 +488,7 @@ struct ACPResumeTaskGraphOfferTests {
         try await Self.withFixture { fixture in
             try fixture.seedEarlierSessionCheckpoint()
             let sessionID = try await fixture.newSession(id: 1)
-            #expect(await fixture.permissionRequest() != nil)
+            #expect(await fixture.elicitationRequest() != nil)
             let prompt = fixture.startPrompt("Hello", id: 2, sessionID: sessionID)
             #expect(await fixture.waitForPromptsAwaitingTheOffer(1))
             let countBeforeShutdown = fixture.wire.count

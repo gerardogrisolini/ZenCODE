@@ -50,6 +50,17 @@ private final class SummaryWire: Sendable {
         }
     }
 
+    /// The `messageId` of every `agent_message_chunk`, in order.
+    func messageIDs() -> [String?] {
+        storage.withLock { values in
+            values.compactMap { value -> [String?]? in
+                guard let update = value.objectValue?["params"]?.objectValue?["update"]?.objectValue,
+                      update["sessionUpdate"] == .string("agent_message_chunk") else { return nil }
+                return [update["messageId"]?.stringValue]
+            }.flatMap { $0 }
+        }
+    }
+
     /// The text of every `agent_message_chunk`, in order.
     func messageTexts() -> [String] {
         timeline().compactMap { $0.hasPrefix("message:") ? String($0.dropFirst("message:".count)) : nil }
@@ -330,14 +341,20 @@ struct ACPFileChangeSummaryPresentationTests {
         let undoable = TurnFileChangeSummary(entries: [
             entry(existedBefore: true, beforeData: Data("before\n".utf8).base64EncodedString()),
         ])
-        let update = try #require(ACPFileChangeSummaryPresentation.update(for: undoable))
+        let update = try #require(ACPFileChangeSummaryPresentation.update(for: undoable, messageID: "summary-1"))
         #expect(update == ZenCODEACPBridge.textChunkJSONUpdate(
             kind: "agent_message_chunk",
             text: "\n\n\n**🪬 Summary: 1 file  +3 -1**\n"
                 + "  modified `Sources/App.swift`  +3 -1\n"
-                + "**`/undo`** to revert · **`/changes diff`** to show patches.\n"
+                + "**`/undo`** to revert · **`/changes diff`** to show patches.\n",
+            messageID: "summary-1"
         ))
         #expect(update.objectValue?["sessionUpdate"] == .string("agent_message_chunk"))
+        // The Summary is a message of its own: each one has a new id.
+        let first = ACPFileChangeSummaryPresentation.update(for: undoable)?.objectValue?["messageId"]?.stringValue
+        let second = ACPFileChangeSummaryPresentation.update(for: undoable)?.objectValue?["messageId"]?.stringValue
+        #expect(first?.isEmpty == false)
+        #expect(first != second)
 
         // A summary the operator cannot undo says so, as the other channels do.
         let notUndoable = TurnFileChangeSummary(entries: [entry(existedBefore: true, beforeData: nil)])
@@ -382,7 +399,7 @@ struct ACPFileChangeSummaryPresentationTests {
             writer: ACPWriter(sink: wire.sink),
             updatePipeline: nil,
             ensureTasklessObserver: {},
-            claimDelegatedToolNotification: { _ in true }
+            completeDelegatedToolCall: { _ in }
         )
         let summary = TurnFileChangeSummary(entries: [
             .init(
@@ -458,6 +475,14 @@ struct ACPFileChangeSummaryPresentationTests {
             let received = fixture.wire.messageTexts().joined()
             #expect(received.components(separatedBy: "🪬 Summary:").count == 2)
             #expect(timeline.dropLast().last?.hasPrefix("message:") == true)
+            // The Summary is a message of its own: the buffer did not merge it
+            // into the text of the turn, so it is the last message, with an id
+            // no other message has.
+            let ids = fixture.wire.messageIDs()
+            #expect(ids.count >= 2)
+            #expect(ids.allSatisfy { $0?.isEmpty == false })
+            let summaryID = try #require(ids.last ?? nil)
+            #expect(!ids.dropLast().contains(summaryID))
         }
     }
 
