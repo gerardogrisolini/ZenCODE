@@ -34,7 +34,7 @@ struct ZenCronToolchainTests {
         let fake = try FakeCrontab(standardOutput: text)
         defer { fake.remove() }
 
-        let result = try fake.client.readCrontab()
+        let result = try fake.readCrontab()
 
         #expect(result == text)
         #expect(try fake.invocations() == ["-l"])
@@ -48,7 +48,7 @@ struct ZenCronToolchainTests {
         )
         defer { fake.remove() }
 
-        #expect(try fake.client.readCrontab() == "")
+        #expect(try fake.readCrontab() == "")
     }
 
     @Test("readCrontab surfaces other failures and bounds stderr")
@@ -60,7 +60,7 @@ struct ZenCronToolchainTests {
         defer { fake.remove() }
 
         do {
-            _ = try fake.client.readCrontab()
+            _ = try fake.readCrontab()
             Issue.record("expected commandFailed")
         } catch let ZenCrontabError.commandFailed(status, detail) {
             #expect(status == 3)
@@ -76,7 +76,7 @@ struct ZenCronToolchainTests {
         defer { fake.remove() }
 
         do {
-            _ = try fake.client.readCrontab()
+            _ = try fake.readCrontab()
             Issue.record("expected commandFailed")
         } catch let ZenCrontabError.commandFailed(status, detail) {
             #expect(status == 0)
@@ -92,7 +92,7 @@ struct ZenCronToolchainTests {
         let fake = try FakeCrontab()
         defer { fake.remove() }
 
-        try fake.client.writeCrontab(text)
+        try fake.writeCrontab(text)
 
         #expect(try fake.invocations() == ["-"])
         #expect(try fake.recordedInput() == text)
@@ -103,7 +103,7 @@ struct ZenCronToolchainTests {
         let fake = try FakeCrontab()
         defer { fake.remove() }
 
-        try fake.client.writeCrontab("")
+        try fake.writeCrontab("")
 
         #expect(try fake.invocations() == ["-r"])
         #expect(try fake.recordedInput() == nil)
@@ -128,8 +128,38 @@ struct ZenCronToolchainTests {
         let directory: URL
         let scriptPath: String
 
-        var client: SystemCrontabClient {
+        /// Runs the stand-in the way production does, retrying only while the
+        /// launch itself fails.
+        ///
+        /// The script was written and made executable right here, yet a sibling
+        /// suite forking at that moment can still make the launch fail with
+        /// `.crontabUnavailable`. No child started, so nothing is repeated; the
+        /// deadline bounds a genuine failure instead of pacing the retries.
+        func readCrontab() throws -> String {
+            try retryingLaunch { try client.readCrontab() }
+        }
+
+        func writeCrontab(_ text: String) throws {
+            try retryingLaunch { try client.writeCrontab(text) }
+        }
+
+        private var client: SystemCrontabClient {
             SystemCrontabClient(crontabPath: scriptPath)
+        }
+
+        private func retryingLaunch<T>(_ body: () throws -> T) throws -> T {
+            let deadline = ContinuousClock.now + .seconds(30)
+            var delayMilliseconds = 2.0
+            while true {
+                do {
+                    return try body()
+                } catch ZenCrontabError.crontabUnavailable where ContinuousClock.now < deadline {
+                    // A burst of forks clears within milliseconds; back off so a
+                    // persistent failure does not hammer the system with spawns.
+                    Thread.sleep(forTimeInterval: delayMilliseconds / 1000)
+                    delayMilliseconds = min(delayMilliseconds * 2, 100)
+                }
+            }
         }
 
         init(
